@@ -1,0 +1,1884 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>curl ⇄ OpenAPI ⇄ .http</title>
+    <style>
+        :root{
+            --orange: orange;
+            --orange-deep:#e5651a;
+            --ink:#1b120a;
+            --ink-2:#241809;
+            --paper:#fff3e2;
+            --line:rgba(27,18,10,.22);
+            --mono:"JetBrains Mono","SFMono-Regular",Menlo,Consolas,monospace;
+        }
+        *{box-sizing:border-box}
+        html,body{margin:0}
+        body{
+            background:var(--orange);
+            color:var(--ink);
+            font-family:var(--mono);
+            font-size:13px;
+            line-height:1.5;
+            padding:22px 18px 60px;
+        }
+        header{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;max-width:1560px;margin:0 auto 18px}
+        h1{font-size:19px;margin:0;letter-spacing:-.4px;font-weight:700}
+        .wrap{max-width:1560px;margin:0 auto;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:stretch}
+        .panel{background:var(--paper);border:1.5px solid var(--ink);border-radius:3px;box-shadow:5px 5px 0 rgba(27,18,10,.35);overflow:hidden;
+            display:flex;flex-direction:column;height:calc(100vh - 100px);min-height:440px}
+        .panel > h2{
+            margin:0;padding:7px 11px;font-size:11px;letter-spacing:1.4px;text-transform:uppercase;
+            background:var(--ink);color:var(--orange);font-weight:600;display:flex;justify-content:space-between;gap:10px;align-items:center
+        }
+        textarea{
+            width:100%;flex:1 1 auto;min-height:0;border:0;padding:11px;resize:none;
+            font:inherit;background:transparent;color:var(--ink);outline:none;white-space:pre;overflow-wrap:normal;overflow-x:auto
+        }
+        .bar{display:flex;gap:8px;padding:9px 11px;flex-wrap:wrap;align-items:center}
+        button{
+            font:inherit;font-weight:600;cursor:pointer;border:1.5px solid var(--ink);background:var(--paper);color:var(--ink);
+            padding:5px 12px;border-radius:2px;transition:transform .06s,background .12s
+        }
+        button:hover{background:var(--orange)}
+        button:active{transform:translateY(1px)}
+        button:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
+        .seg{display:flex;gap:6px;padding:8px 11px;border-bottom:1.5px solid var(--line);align-items:center;flex-wrap:wrap}
+        .seg button{padding:4px 10px;font-size:11px;letter-spacing:.6px}
+        .seg button[aria-pressed=true]{background:var(--ink);color:var(--orange)}
+        .seg .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.8px;opacity:.7}
+        #out{tab-size:2}
+        .err{background:#7a1d0c;color:#ffd9c9;padding:9px 11px;font-size:12px}
+        .err:empty{display:none}
+        .toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--orange);
+            padding:8px 16px;border-radius:2px;opacity:0;pointer-events:none;transition:opacity .18s;font-size:12px;z-index:9}
+        .toast.on{opacity:1}
+        #cnt,#ocnt{font-size:10px;font-weight:400;letter-spacing:0;text-transform:none;opacity:.8}
+        #tfmts button{
+            font:inherit;font-size:inherit;letter-spacing:inherit;text-transform:inherit;font-weight:inherit;
+            background:none;border:0;padding:0;color:inherit;cursor:pointer;opacity:.4;transition:opacity .12s
+        }
+        #tfmts button:hover{background:none;opacity:.75}
+        #tfmts button[aria-checked=true]{opacity:1;text-decoration:underline;text-underline-offset:3px}
+        #tfmts button:focus-visible{outline:2px solid var(--orange);outline-offset:2px}
+        #target{display:none}
+        @media(max-width:600px){#tfmts{display:none}#target{display:inline-block}}
+        .panel > h2 select{
+            font:inherit;font-size:11px;letter-spacing:1.4px;text-transform:uppercase;font-weight:600;cursor:pointer;
+            background:var(--ink);color:var(--orange);border:1.5px solid var(--orange);border-radius:2px;padding:1px 4px
+        }
+        .panel > h2 select:focus-visible{outline:2px solid var(--paper);outline-offset:2px}
+        #fmts.known span[data-f]{opacity:.4}
+        #fmts.known span.on{opacity:1;text-decoration:underline;text-underline-offset:3px}
+        .seg[hidden]{display:none}
+        .seg button{user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;touch-action:manipulation}
+        .seg button.hold{position:relative}
+        .seg button.hold::after{content:"";position:absolute;right:2px;bottom:2px;border-left:4px solid transparent;border-bottom:4px solid currentColor;opacity:.55}
+        .pop{position:fixed;z-index:10;background:var(--paper);border:1.5px solid var(--ink);box-shadow:4px 4px 0 rgba(27,18,10,.35);
+            padding:9px;display:flex;flex-direction:column;gap:5px;width:250px}
+        .pop[hidden]{display:none}
+        .pop label{font-size:11px;font-weight:600}
+        .pop input{font:inherit;border:1.5px solid var(--ink);background:#fff;color:var(--ink);padding:4px 6px;border-radius:2px;outline:none}
+        .pop input:focus-visible{box-shadow:0 0 0 2px var(--orange)}
+        .pop small{font-size:10px;opacity:.7;line-height:1.35}
+        @media(max-width:1080px){.wrap{grid-template-columns:1fr}.panel{height:440px;min-height:0}}
+        @media(prefers-reduced-motion:reduce){*{transition:none!important}}
+    </style>
+</head>
+<body>
+
+<header>
+    <h1>OpenAPI ⇄ curl ⇄ .http</h1>
+</header>
+
+<div class="wrap">
+    <section class="panel">
+        <h2><span id="fmts"><span data-f="openapi">OpenAPI</span>, <span data-f="curl">curl</span>, <span data-f="http">.http</span></span> <span id="cnt"></span>
+            <button id="clear" type="button" style="padding:2px 9px;font-size:11px">Clear</button>
+        </h2>
+        <label for="src"></label><textarea id="src" spellcheck="false" placeholder="Ctrl+V"></textarea>
+    </section>
+
+    <section class="panel">
+        <h2><span id="tfmts" role="radiogroup" aria-label="Output format"><button type="button" role="radio" data-t="openapi">OpenAPI</button>, <button type="button" role="radio" data-t="curl">curl</button>, <button type="button" role="radio" data-t="http">.http</button></span><select id="target" aria-label="Output format">
+            <option value="http">.http</option>
+            <option value="curl">curl</option>
+            <option value="openapi">OpenAPI</option>
+        </select> <span id="ocnt"></span>
+            <span style="display:flex;gap:6px;align-items:center">
+        <button id="save" style="padding:2px 9px;font-size:11px">Save</button>
+        <button id="copy" style="padding:2px 9px;font-size:11px">Copy</button>
+      </span>
+        </h2>
+        <div class="seg" id="seg"><span class="lbl">out</span></div>
+        <label for="out"></label><textarea id="out" placeholder="Ctrl+C" spellcheck="false"></textarea>
+        <div class="err" id="err"></div>
+    </section>
+</div>
+
+<div class="pop" id="pop" hidden>
+    <label for="pop-i" id="pop-l"></label>
+    <input id="pop-i" spellcheck="false" autocomplete="off">
+    <small id="pop-h"></small>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+    (function(){
+        "use strict";
+
+
+        /* ---------- shell tokenizer ---------- */
+
+        function ansiC(src, i) {
+            let out = "";
+            while (i < src.length && src[i] !== "'") {
+                if (src[i] !== "\\") { out += src[i++]; continue; }
+                i++;
+                const c = src[i++];
+                const hex = (max) => {
+                    let h = "";
+                    while (h.length < max && /[0-9a-fA-F]/.test(src[i] || "")) h += src[i++];
+                    return h ? String.fromCodePoint(parseInt(h, 16)) : "";
+                };
+                switch (c) {
+                    case "a": out += "\x07"; break;
+                    case "b": out += "\b"; break;
+                    case "e": case "E": out += "\x1b"; break;
+                    case "f": out += "\f"; break;
+                    case "n": out += "\n"; break;
+                    case "r": out += "\r"; break;
+                    case "t": out += "\t"; break;
+                    case "v": out += "\v"; break;
+                    case "\\": out += "\\"; break;
+                    case "'": out += "'"; break;
+                    case '"': out += '"'; break;
+                    case "?": out += "?"; break;
+                    case "x": out += hex(2); break;
+                    case "u": out += hex(4); break;
+                    case "U": out += hex(8); break;
+                    default:
+                        if (/[0-7]/.test(c)) {
+                            let o = c;
+                            while (o.length < 3 && /[0-7]/.test(src[i] || "")) o += src[i++];
+                            out += String.fromCharCode(parseInt(o, 8));
+                        } else if (c !== undefined) out += c;
+                }
+            }
+            return { text: out, end: i + 1 };
+        }
+
+        function tokenize(src) {
+            const toks = [];
+            let i = 0, cur = "", has = false;
+            const n = src.length;
+            const push = () => { if (has) { toks.push(cur); cur = ""; has = false; } };
+            while (i < n) {
+                const c = src[i];
+                if (c === "^" && src[i + 1] === "\n") { i += 2; continue; }          // cmd.exe
+                if (c === "`" && src[i + 1] === "\n") { i += 2; continue; }          // powershell
+                if (c === "\\" && (src[i + 1] === "\n" || (src[i + 1] === "\r" && src[i + 2] === "\n"))) {
+                    i += src[i + 1] === "\r" ? 3 : 2; continue;
+                }
+                if (c === " " || c === "\t" || c === "\n" || c === "\r") { push(); i++; continue; }
+                if (c === "#" && !has) { while (i < n && src[i] !== "\n") i++; continue; }      // shell comment
+                if (c === "'") {
+                    has = true; i++;
+                    while (i < n && src[i] !== "'") cur += src[i++];
+                    i++; continue;
+                }
+                if (c === '"') {
+                    has = true; i++;
+                    while (i < n && src[i] !== '"') {
+                        if (src[i] === "\\" && '"\\$`\n'.indexOf(src[i + 1]) >= 0) {
+                            if (src[i + 1] === "\n") { i += 2; continue; }
+                            cur += src[i + 1]; i += 2; continue;
+                        }
+                        cur += src[i++];
+                    }
+                    i++; continue;
+                }
+                if (c === "$" && src[i + 1] === "'") {
+                    has = true; i += 2;
+                    const r = ansiC(src, i); cur += r.text; i = r.end; continue;
+                }
+                if (c === "\\" && i + 1 < n && src[i + 1] !== "\n") { has = true; cur += src[i + 1]; i += 2; continue; }
+                has = true; cur += c; i++;
+            }
+            push();
+            return toks;
+        }
+
+        /* ---------- curl arg parsing ---------- */
+
+        const NO_ARG = new Set([
+            "--compressed","-k","--insecure","-L","--location","-s","--silent","-i","--include",
+            "-v","--verbose","-g","--globoff","-f","--fail","--http1.1","--http2","--http2-prior-knowledge",
+            "-N","--no-buffer","-S","--show-error","-#","--progress-bar","--path-as-is","--raw","-I","--head"
+        ]);
+        const ONE_ARG = new Set([
+            "-H","--header","-X","--request","-d","--data","--data-raw","--data-binary","--data-ascii",
+            "--data-urlencode","--json","-b","--cookie","-u","--user","-A","--user-agent","-e","--referer",
+            "-F","--form","--form-string","-o","--output","--url","--connect-timeout","-m","--max-time",
+            "--retry","--proxy","-x","--cacert","--cert","--key","-w","--write-out","-c","--cookie-jar",
+            "--resolve","--interface","--limit-rate","-T","--upload-file"
+        ]);
+
+        function splitCurls(tokens) {
+            const groups = [];
+            let cur = null;
+            for (const t of tokens) {
+                const base = t.split(/[\\/]/).pop().toLowerCase();
+                if (base === "curl" || base === "curl.exe") { cur = []; groups.push(cur); continue; }
+                if (cur) cur.push(t);
+            }
+            return groups;
+        }
+
+        function parseCurl(args) {
+            const req = { method: null, url: null, headers: [], data: [], form: [], upload: null, warnings: [] };
+            for (let i = 0; i < args.length; i++) {
+                const a = args[i];
+                if (NO_ARG.has(a)) continue;
+                if (a === "--url") { req.url = args[++i]; continue; }
+                if (a === "-X" || a === "--request") { req.method = (args[++i] || "").toUpperCase(); continue; }
+                if (a === "-H" || a === "--header") {
+                    const h = args[++i] || "";
+                    const k = h.indexOf(":");
+                    if (k > 0) req.headers.push([h.slice(0, k).trim(), h.slice(k + 1).trim()]);
+                    continue;
+                }
+                if (a === "-b" || a === "--cookie") { req.headers.push(["Cookie", args[++i] || ""]); continue; }
+                if (a === "-A" || a === "--user-agent") { req.headers.push(["User-Agent", args[++i] || ""]); continue; }
+                if (a === "-e" || a === "--referer") { req.headers.push(["Referer", args[++i] || ""]); continue; }
+                if (a === "-u" || a === "--user") {
+                    const v = args[++i] || "";
+                    let enc; try { enc = btoa(unescape(encodeURIComponent(v))); } catch (_) { enc = ""; }
+                    req.headers.push(["Authorization", "Basic " + enc]);
+                    continue;
+                }
+                if (a === "--json") {
+                    req.data.push({ kind: "raw", value: args[++i] || "" });
+                    req.headers.push(["Content-Type", "application/json"]);
+                    req.headers.push(["Accept", "application/json"]);
+                    continue;
+                }
+                if (a === "-d" || a === "--data" || a === "--data-raw" || a === "--data-binary" || a === "--data-ascii") {
+                    const v = args[++i] || "";
+                    if (a !== "--data-raw" && v.startsWith("@")) req.data.push({ kind: "file", value: v.slice(1) });
+                    else req.data.push({ kind: "raw", value: v });
+                    continue;
+                }
+                if (a === "--data-urlencode") { req.data.push({ kind: "urlenc", value: args[++i] || "" }); continue; }
+                if (a === "-F" || a === "--form" || a === "--form-string") { req.form.push(args[++i] || ""); continue; }
+                if (a === "-T" || a === "--upload-file") { req.upload = args[++i] || ""; continue; }
+                if (ONE_ARG.has(a)) { i++; continue; }
+                if (a.startsWith("--") && a.includes("=")) continue;
+                if (a.startsWith("-") && a.length > 1) { req.warnings.push(a); continue; }
+                if (!req.url) req.url = a;
+            }
+            return req;
+        }
+
+        /* ---------- rendering ---------- */
+
+        const BOUNDARY = "WebAppBoundary";
+
+        function buildBody(req, pretty) {
+            if (req.form.length) {
+                const parts = req.form.map(f => {
+                    const eq = f.indexOf("=");
+                    const name = eq < 0 ? f : f.slice(0, eq);
+                    let val = eq < 0 ? "" : f.slice(eq + 1);
+                    const lines = ["--" + BOUNDARY];
+                    if (val.startsWith("@") || val.startsWith("<")) {
+                        const path = val.slice(1).split(";")[0];
+                        lines.push(`Content-Disposition: form-data; name="${name}"; filename="${path.split("/").pop()}"`, "", "< " + path);
+                    } else {
+                        lines.push(`Content-Disposition: form-data; name="${name}"`, "", val);
+                    }
+                    return lines.join("\n");
+                });
+                return { body: parts.join("\n") + "\n--" + BOUNDARY + "--", ctype: "multipart/form-data; boundary=" + BOUNDARY };
+            }
+            if (req.upload) return { body: "< " + req.upload, ctype: null };
+            if (!req.data.length) return { body: null, ctype: null };
+
+            const fileOnly = req.data.length === 1 && req.data[0].kind === "file";
+            if (fileOnly) return { body: "< " + req.data[0].value, ctype: null };
+
+            const chunks = req.data.map(d => {
+                if (d.kind === "file") return "< " + d.value;
+                if (d.kind === "urlenc") {
+                    const eq = d.value.indexOf("=");
+                    return eq < 0 ? encodeURIComponent(d.value)
+                        : d.value.slice(0, eq) + "=" + encodeURIComponent(d.value.slice(eq + 1));
+                }
+                return d.value;
+            });
+            let body = chunks.join("&");
+            if (pretty) {
+                const t = body.trim();
+                if (t.startsWith("{") || t.startsWith("[")) {
+                    try { body = JSON.stringify(JSON.parse(t), null, 2); } catch (_) {}
+                }
+            }
+            return { body, ctype: null };
+        }
+
+        function render(req, o) {
+            const out = [];
+            let url = (req.url || "").trim();
+            if (o.host) url = hostify(url, o.hostVar);
+
+            const { body, ctype } = buildBody(req, true);
+            const method = req.method || (body !== null ? "POST" : "GET");
+
+            out.push("###");
+            if (o.name) {
+                const nm = o.nameFor(autoName(url));
+                if (nm) out.push("# @name " + nm);
+            }
+
+            if (o.query && url.includes("?")) {
+                const [base, qs] = [url.slice(0, url.indexOf("?")), url.slice(url.indexOf("?") + 1)];
+                out.push(method + " " + base);
+                qs.split("&").forEach((p, idx) => out.push("    " + (idx ? "&" : "?") + p));
+            } else {
+                out.push(method + " " + url);
+            }
+
+            const seen = new Set();
+            let hasCT = false;
+            for (const [k, v] of req.headers) {
+                const lk = k.toLowerCase();
+                if (lk === "content-length") continue;   // stale once the body is reformatted
+                const key = lk + "|" + v;
+                if (seen.has(key)) continue;
+                seen.add(key);
+                if (lk === "content-type") { if (ctype) continue; hasCT = true; }
+                out.push(k + ": " + v);
+            }
+            if (ctype) out.push("Content-Type: " + ctype);
+            else if (!hasCT && body !== null && req.data.length) {
+                const t = body.trim();
+                if (t.startsWith("{") || t.startsWith("[")) out.push("Content-Type: application/json");
+                else out.push("Content-Type: application/x-www-form-urlencoded");
+            }
+
+            if (body !== null) { out.push(""); out.push(body); }
+            return out.join("\n");
+        }
+
+
+        /* =================== YAML (OpenAPI subset) =================== */
+
+        function stripComment(s) {
+            let q = null;
+            for (let i = 0; i < s.length; i++) {
+                const c = s[i];
+                if (q) {
+                    if (c === "\\" && q === '"') { i++; continue; }
+                    if (c === q) q = null;
+                    continue;
+                }
+                if (c === '"' || c === "'") { q = c; continue; }
+                if (c === "#" && (i === 0 || /\s/.test(s[i - 1]))) return s.slice(0, i);
+            }
+            return s;
+        }
+
+        function unquote(s) {
+            s = s.trim();
+            if (s.length > 1 && s[0] === '"' && s[s.length - 1] === '"') {
+                try { return JSON.parse(s); }
+                catch (_) { return s.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, "\\"); }
+            }
+            if (s.length > 1 && s[0] === "'" && s[s.length - 1] === "'") return s.slice(1, -1).replace(/''/g, "'");
+            return s;
+        }
+
+        function flowParse(src, pos) {
+            // returns {value, end}; src[pos] is '[' or '{'
+            const open = src[pos], close = open === "[" ? "]" : "}";
+            let i = pos + 1;
+            const isArr = open === "[";
+            const out = isArr ? [] : {};
+            const readScalarTok = () => {
+                let depth = 0, q = null, start = i, txt = "";
+                while (i < src.length) {
+                    const c = src[i];
+                    if (q) { txt += c; if (c === q) q = null; i++; continue; }
+                    if (c === '"' || c === "'") { q = c; txt += c; i++; continue; }
+                    if (c === "[" || c === "{") { depth++; txt += c; i++; continue; }
+                    if (c === "]" || c === "}") { if (depth === 0) break; depth--; txt += c; i++; continue; }
+                    if (c === "," && depth === 0) break;
+                    if (c === ":" && depth === 0 && (src[i + 1] === " " || src[i + 1] === undefined)) break;
+                    txt += c; i++;
+                }
+                return txt;
+            };
+            for (;;) {
+                while (i < src.length && /[\s,]/.test(src[i])) i++;
+                if (i >= src.length) break;
+                if (src[i] === close) { i++; break; }
+                if (src[i] === "[" || src[i] === "{") {
+                    const r = flowParse(src, i); i = r.end;
+                    if (isArr) out.push(r.value);
+                    continue;
+                }
+                const tok = readScalarTok();
+                if (!isArr) {
+                    let key = unquote(tok.trim());
+                    if (src[i] === ":") {
+                        i++;
+                        while (i < src.length && src[i] === " ") i++;
+                        if (src[i] === "[" || src[i] === "{") { const r = flowParse(src, i); i = r.end; out[key] = r.value; }
+                        else out[key] = scalarValue(readScalarTok());
+                    } else out[key] = null;
+                } else {
+                    out.push(scalarValue(tok));
+                }
+            }
+            return { value: out, end: i };
+        }
+
+        function scalarValue(s) {
+            s = String(s).trim();
+            if (s === "" || s === "~" || s === "null" || s === "Null" || s === "NULL") return null;
+            if (s[0] === '"' || s[0] === "'") return unquote(s);
+            if (s[0] === "[" || s[0] === "{") return flowParse(s, 0).value;
+            if (s === "true" || s === "True" || s === "TRUE") return true;
+            if (s === "false" || s === "False" || s === "FALSE") return false;
+            if (/^-?\d+$/.test(s)) { const n = parseInt(s, 10); return Number.isSafeInteger(n) ? n : s; }
+            if (/^-?(\d+\.\d*|\.\d+)([eE][-+]?\d+)?$/.test(s)) return parseFloat(s);
+            if (/^-?\d+[eE][-+]?\d+$/.test(s)) return parseFloat(s);
+            return s;
+        }
+
+        function splitKey(line) {
+            let q = null, depth = 0;
+            for (let j = 0; j < line.length; j++) {
+                const c = line[j];
+                if (q) { if (c === q) q = null; continue; }
+                if (c === '"' || c === "'") { q = c; continue; }
+                if (c === "[" || c === "{") depth++;
+                else if (c === "]" || c === "}") depth--;
+                else if (c === ":" && depth === 0 && (j + 1 >= line.length || line[j + 1] === " ")) {
+                    return { key: unquote(line.slice(0, j).trim()), rest: line.slice(j + 1).trim() };
+                }
+            }
+            return null;
+        }
+
+        function parseYaml(text) {
+            const L = text.replace(/\r/g, "").replace(/\t/g, "  ").split("\n");
+            let i = 0;
+            const indentOf = (s) => s.match(/^ */)[0].length;
+            const clean = (s) => stripComment(s).replace(/\s+$/, "");
+            const blank = (s) => !clean(s).trim();
+            const skip = () => { while (i < L.length && blank(L[i])) i++; };
+
+            // Copying from an IDE often drops the first line's leading spaces. If the line after it
+            // sits deeper than the shallowest later line, those shallow lines are its siblings,
+            // so give the first line their indentation back.
+            const filled = [];
+            L.forEach((l, k) => { if (!blank(l)) filled.push(k); });
+            if (filled.length > 2) {
+                const first = filled[0];
+                const rest = filled.slice(1).map(k => indentOf(clean(L[k])));
+                const shallow = Math.min.apply(null, rest);
+                if (indentOf(clean(L[first])) < shallow && rest[0] > shallow) {
+                    L[first] = " ".repeat(shallow) + L[first].replace(/^ +/, "");
+                }
+            }
+
+            function blockScalar(marker, ind) {
+                const fold = marker[0] === ">";
+                const keep = marker.indexOf("+") >= 0, strip = marker.indexOf("-") >= 0;
+                const lines = [];
+                let base = null;
+                while (i < L.length) {
+                    const l = L[i].replace(/\s+$/, "");
+                    if (!l.trim()) { lines.push(""); i++; continue; }
+                    const cur = indentOf(l);
+                    if (cur <= ind) break;
+                    if (base === null) base = cur;
+                    lines.push(l.slice(Math.min(base, cur)));
+                    i++;
+                }
+                while (lines.length && lines[lines.length - 1] === "") lines.pop();
+                let s = fold ? lines.join(" ").replace(/\s+/g, " ").trim() : lines.join("\n");
+                if (!strip && !fold) s += "\n";
+                if (keep) s += "\n";
+                return s;
+            }
+
+            function parseValue(rest, ind) {
+                if (/^[|>][-+\d]*$/.test(rest)) return blockScalar(rest, ind);
+                if (rest !== "") return scalarValue(rest);
+                skip();
+                if (i >= L.length) return null;
+                const nxt = indentOf(clean(L[i]));
+                const t = clean(L[i]).trim();
+                if (nxt <= ind) {
+                    if (nxt === ind && (t === "-" || t.startsWith("- "))) return parseSeq(ind);
+                    return null;
+                }
+                if (t === "-" || t.startsWith("- ")) return parseSeq(nxt);
+                return parseMap(nxt);
+            }
+
+            function parseMap(ind) {
+                const obj = {};
+                for (;;) {
+                    skip();
+                    if (i >= L.length) break;
+                    const line = clean(L[i]);
+                    const cur = indentOf(line);
+                    if (cur < ind) break;
+                    const t = line.trim();
+                    if (cur === ind && (t === "-" || t.startsWith("- "))) break;
+                    if (cur > ind) { i++; continue; }
+                    const kv = splitKey(t);
+                    if (!kv) { i++; continue; }
+                    i++;
+                    obj[kv.key] = parseValue(kv.rest, ind);
+                }
+                return obj;
+            }
+
+            function parseSeq(ind) {
+                const arr = [];
+                for (;;) {
+                    skip();
+                    if (i >= L.length) break;
+                    const line = clean(L[i]);
+                    if (indentOf(line) !== ind) break;
+                    const t = line.trim();
+                    if (!(t === "-" || t.startsWith("- "))) break;
+                    const dash = line.indexOf("-");
+                    const after = line.slice(dash + 1);
+                    const lead = after.match(/^ */)[0].length;
+                    const itemIndent = dash + 1 + lead;
+                    const rest = after.trim();
+                    i++;
+                    if (rest === "") {
+                        arr.push(parseValue("", ind));
+                    } else if (/^[|>][-+\d]*$/.test(rest)) {
+                        arr.push(blockScalar(rest, ind));
+                    } else {
+                        const kv = splitKey(rest);
+                        if (kv) {
+                            const obj = {};
+                            obj[kv.key] = parseValue(kv.rest, itemIndent);
+                            Object.assign(obj, parseMap(itemIndent));
+                            arr.push(obj);
+                        } else arr.push(scalarValue(rest));
+                    }
+                }
+                return arr;
+            }
+
+            skip();
+            if (i >= L.length) return null;
+            const first = clean(L[i]).trim();
+            const ind0 = indentOf(clean(L[i]));
+            return (first === "-" || first.startsWith("- ")) ? parseSeq(ind0) : parseMap(ind0);
+        }
+
+        function parseSpec(text) {
+            const t = text.trim();
+            if (t.startsWith("{") || t.startsWith("[")) {
+                try { return JSON.parse(t); } catch (_) { /* fall through to yaml */ }
+            }
+            return parseYaml(text);
+        }
+
+
+        /* =================== OpenAPI → .http =================== */
+
+        const HTTP_METHODS = ["get", "post", "put", "patch", "delete", "head", "options", "trace"];
+
+        function resolvePtr(doc, ref) {
+            if (typeof ref !== "string" || ref[0] !== "#") return null;
+            const parts = ref.replace(/^#\/?/, "").split("/").filter(Boolean)
+                .map(s => decodeURIComponent(s).replace(/~1/g, "/").replace(/~0/g, "~"));
+            let cur = doc;
+            for (const p of parts) {
+                if (cur == null || typeof cur !== "object") { cur = undefined; break; }
+                cur = cur[p];
+            }
+            if (cur != null) return cur;
+            // fragments pasted without components: look for the same name anywhere in the paste
+            return parts.length ? findByName(doc, parts[parts.length - 1]) : null;
+        }
+
+        function looksDefined(v) {
+            if (!v || typeof v !== "object" || Array.isArray(v)) return false;
+            return ["type", "properties", "allOf", "oneOf", "anyOf", "items", "enum", "$ref", "content", "in"]
+                .some(k => k in v);
+        }
+
+        function findByName(doc, name) {
+            const seen = new Set(), queue = [doc];
+            while (queue.length) {
+                const node = queue.shift();
+                if (!node || typeof node !== "object" || seen.has(node)) continue;
+                seen.add(node);
+                for (const k of Object.keys(node)) {
+                    const v = node[k];
+                    if (k === name && looksDefined(v)) return v;
+                    if (v && typeof v === "object") queue.push(v);
+                }
+            }
+            return null;
+        }
+
+        function deref(doc, node) {
+            let guard = 0;
+            while (node && typeof node === "object" && typeof node.$ref === "string" && guard++ < 25) {
+                node = resolvePtr(doc, node.$ref);
+            }
+            return node;
+        }
+
+        function sampleFromSchema(doc, schema, depth, chain) {
+            if (!schema || typeof schema !== "object") return null;
+            if (typeof schema.$ref === "string") {
+                if (chain.has(schema.$ref) || depth > 7) return null;
+                const next = new Set(chain); next.add(schema.$ref);
+                return sampleFromSchema(doc, resolvePtr(doc, schema.$ref), depth + 1, next);
+            }
+            if ("example" in schema) return schema.example;
+            if (Array.isArray(schema.examples) && schema.examples.length) return schema.examples[0];
+            if ("default" in schema) return schema.default;
+            if (Array.isArray(schema.enum) && schema.enum.length) return schema.enum[0];
+
+            if (Array.isArray(schema.allOf) && schema.allOf.length) {
+                const merged = {};
+                let scalarHit;
+                schema.allOf.forEach(s => {
+                    const v = sampleFromSchema(doc, s, depth + 1, chain);
+                    if (v && typeof v === "object" && !Array.isArray(v)) Object.assign(merged, v);
+                    else if (v !== null && v !== undefined) scalarHit = v;
+                });
+                if (schema.properties) {
+                    Object.keys(schema.properties).forEach(k => {
+                        merged[k] = sampleFromSchema(doc, schema.properties[k], depth + 1, chain);
+                    });
+                }
+                return Object.keys(merged).length ? merged : (scalarHit !== undefined ? scalarHit : {});
+            }
+            const union = schema.oneOf || schema.anyOf;
+            if (Array.isArray(union) && union.length) return sampleFromSchema(doc, union[0], depth + 1, chain);
+
+            let type = schema.type;
+            if (Array.isArray(type)) type = type.find(t => t !== "null") || type[0];
+            if (!type) type = schema.properties ? "object" : (schema.items ? "array" : null);
+
+            if (type === "object") {
+                const out = {};
+                const props = schema.properties || {};
+                Object.keys(props).forEach(k => { out[k] = sampleFromSchema(doc, props[k], depth + 1, chain); });
+                if (!Object.keys(out).length && schema.additionalProperties && typeof schema.additionalProperties === "object") {
+                    out.key = sampleFromSchema(doc, schema.additionalProperties, depth + 1, chain);
+                }
+                return out;
+            }
+            if (type === "array") return [sampleFromSchema(doc, schema.items || {}, depth + 1, chain)];
+            if (type === "integer" || type === "number") return 0;
+            if (type === "boolean") return false;
+            if (type === "null") return null;
+
+            switch (schema.format) {
+                case "date": return "2026-01-01";
+                case "date-time": return "2026-01-01T00:00:00Z";
+                case "uuid": return "00000000-0000-0000-0000-000000000000";
+                case "email": return "user@example.com";
+                case "uri": case "url": return "https://example.com";
+                case "byte": return "c3RyaW5n";
+                case "binary": return "";
+                case "password": return "secret";
+                default: return "string";
+            }
+        }
+
+        function asText(v) {
+            if (v === null || v === undefined) return "";
+            if (typeof v === "object") return JSON.stringify(v);
+            return String(v);
+        }
+
+        function paramValue(doc, p, o) {
+            if (o.vars) return "{{" + varName(p.name) + "}}";
+            if ("example" in p) return asText(p.example);
+            if (p.examples && typeof p.examples === "object") {
+                const k = Object.keys(p.examples)[0];
+                const ex = k ? deref(doc, p.examples[k]) : null;
+                if (ex && typeof ex === "object" && "value" in ex) return asText(ex.value);
+            }
+            const sch = deref(doc, p.schema);
+            if (sch && typeof sch === "object") {
+                if ("example" in sch) return asText(sch.example);
+                if ("default" in sch) return asText(sch.default);
+                if (Array.isArray(sch.enum) && sch.enum.length) return asText(sch.enum[0]);
+            }
+            if ("default" in p) return asText(p.default);            // swagger 2
+            if (Array.isArray(p.enum) && p.enum.length) return asText(p.enum[0]);
+            return "{{" + varName(p.name) + "}}";
+        }
+
+        function varName(n) {
+            return String(n).replace(/\W/g, "_");
+        }
+
+        function encPart(s) {
+            s = String(s);
+            if (/^\{\{[^{}]+\}\}$/.test(s)) return s;
+            // keep unicode readable; escape only what would break a request line
+            return s.replace(/[\x00-\x20%"'<>#&=+?\\^`{}|\[\]\x7f]/g, function (c) {
+                return "%" + c.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0");
+            });
+        }
+
+        function baseUrl(doc, o) {
+            if (o.ohost) return "{{" + (o.hostVar || "host") + "}}";
+            if (Array.isArray(doc.servers) && doc.servers.length) {
+                const s = doc.servers[0] || {};
+                const vars = s.variables || {};
+                return String(s.url || "").replace(/\{(\w+)\}/g, (m, k) =>
+                    vars[k] && vars[k].default != null ? vars[k].default : m).replace(/\/+$/, "");
+            }
+            if (doc.host) {
+                const scheme = (Array.isArray(doc.schemes) && doc.schemes[0]) || "https";
+                return scheme + "://" + doc.host + String(doc.basePath || "").replace(/\/+$/, "");
+            }
+            return "";
+        }
+
+        function collectParams(doc, pathItem, op) {
+            const map = new Map();
+            const add = (list) => {
+                (Array.isArray(list) ? list : []).forEach(raw => {
+                    const p = deref(doc, raw);
+                    if (p && p.name) map.set((p.in || "") + ":" + p.name, p);
+                });
+            };
+            add(pathItem && pathItem.parameters);
+            add(op && op.parameters);
+            return Array.from(map.values());
+        }
+
+        function requestBodyOf(doc, op, params, o) {
+            const rb = deref(doc, op.requestBody);
+            if (rb && rb.content && typeof rb.content === "object") {
+                const cts = Object.keys(rb.content);
+                const ct = cts.find(c => /json/i.test(c)) || cts.find(c => !/\*/.test(c)) || cts[0];
+                if (!ct) return { body: null, ctype: null };
+                if (!o.body) return { body: null, ctype: ct };
+                const media = deref(doc, rb.content[ct]) || {};
+                let val;
+                if ("example" in media) val = media.example;
+                else if (media.examples && typeof media.examples === "object") {
+                    const k = Object.keys(media.examples)[0];
+                    const ex = k ? deref(doc, media.examples[k]) : null;
+                    if (ex && typeof ex === "object" && "value" in ex) val = ex.value;
+                }
+                if (val === undefined && media.schema) val = sampleFromSchema(doc, media.schema, 0, new Set());
+                if (val === undefined) return { body: null, ctype: ct };
+                return { body: serializeBody(val, ct), ctype: ct };
+            }
+
+            // swagger 2
+            const bodyParam = params.find(p => p.in === "body");
+            const consumes = (Array.isArray(op.consumes) && op.consumes[0]) || (Array.isArray(doc.consumes) && doc.consumes[0]) || null;
+            if (bodyParam) {
+                const ct = consumes || "application/json";
+                if (!o.body) return { body: null, ctype: ct };
+                const val = sampleFromSchema(doc, bodyParam.schema || {}, 0, new Set());
+                return { body: serializeBody(val, ct), ctype: ct };
+            }
+            const formParams = params.filter(p => p.in === "formData");
+            if (formParams.length) {
+                const hasFile = formParams.some(p => p.type === "file");
+                const ct = consumes || (hasFile ? "multipart/form-data" : "application/x-www-form-urlencoded");
+                if (!o.body) return { body: null, ctype: ct };
+                if (/multipart/i.test(ct)) {
+                    const parts = formParams.map(p => {
+                        const head = ["--" + BOUNDARY];
+                        if (p.type === "file") {
+                            head.push('Content-Disposition: form-data; name="' + p.name + '"; filename="' + p.name + '"', "", "< ./" + p.name);
+                        } else {
+                            head.push('Content-Disposition: form-data; name="' + p.name + '"', "", paramValue(doc, p, o));
+                        }
+                        return head.join("\n");
+                    });
+                    return { body: parts.join("\n") + "\n--" + BOUNDARY + "--", ctype: "multipart/form-data; boundary=" + BOUNDARY };
+                }
+                return {
+                    body: formParams.map(p => encPart(p.name) + "=" + encPart(paramValue(doc, p, o))).join("&"),
+                    ctype: ct
+                };
+            }
+            return { body: null, ctype: null };
+        }
+
+        function serializeBody(val, ct) {
+            if (/json/i.test(ct)) return JSON.stringify(val, null, 2);
+            if (/x-www-form-urlencoded/i.test(ct)) {
+                if (val && typeof val === "object" && !Array.isArray(val)) {
+                    return Object.keys(val).map(k => encodeURIComponent(k) + "=" + encodeURIComponent(asText(val[k]))).join("&");
+                }
+                return asText(val);
+            }
+            if (/multipart/i.test(ct) && val && typeof val === "object" && !Array.isArray(val)) {
+                const parts = Object.keys(val).map(k =>
+                    ["--" + BOUNDARY, 'Content-Disposition: form-data; name="' + k + '"', "", asText(val[k])].join("\n"));
+                return parts.join("\n") + "\n--" + BOUNDARY + "--";
+            }
+            if (typeof val === "string") return val;
+            return JSON.stringify(val, null, 2);
+        }
+
+        function acceptOf(doc, op) {
+            const responses = op.responses || {};
+            const codes = Object.keys(responses).sort();
+            for (const c of codes) {
+                if (!/^2/.test(c)) continue;
+                const resp = deref(doc, responses[c]);
+                if (resp && resp.content && typeof resp.content === "object") {
+                    const cts = Object.keys(resp.content);
+                    const ct = cts.find(x => /json/i.test(x)) || cts[0];
+                    if (ct) return ct;
+                }
+            }
+            if (Array.isArray(op.produces) && op.produces[0]) return op.produces[0];
+            if (Array.isArray(doc.produces) && doc.produces[0]) return doc.produces[0];
+            return null;
+        }
+
+        function slug(s) {
+            return String(s).replace(/[{}]/g, "").replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "");
+        }
+
+        function commentLines(text, prefix) {
+            return String(text).replace(/\s+$/, "").split("\n").map(l => (prefix + " " + l).replace(/\s+$/, ""));
+        }
+
+        function renderOperation(doc, pathKey, method, op, pathItem, o) {
+            const params = collectParams(doc, pathItem, op);
+            const out = [];
+
+            const pathVals = {};
+            params.filter(p => p.in === "path").forEach(p => { pathVals[p.name] = paramValue(doc, p, o); });
+            const path = String(pathKey).replace(/\{([^{}]+)\}/g, (m, n) => {
+                const key = n.trim();
+                return key in pathVals ? encPart(pathVals[key]) : "{{" + varName(key) + "}}";
+            });
+
+            const query = params
+                .filter(p => p.in === "query")
+                .filter(p => o.allp || p.required === true)
+                .map(p => encPart(p.name) + "=" + encPart(paramValue(doc, p, o)));
+
+            const name = op.operationId ? slug(op.operationId) : slug(method + "-" + pathKey);
+            const label = op.summary ? String(op.summary).split("\n")[0] : (op.operationId || (method.toUpperCase() + " " + pathKey));
+
+            out.push("### " + label);
+            if (o.desc) {
+                if (op.description) commentLines(op.description, "#").forEach(l => out.push(l));
+                if (op.deprecated === true) out.push("# deprecated");
+                if (Array.isArray(op.tags) && op.tags.length) out.push("# tags: " + op.tags.join(", "));
+            }
+            if (o.name) {
+                const nm = o.nameFor(name);
+                if (nm) out.push("# @name " + nm);
+            }
+
+            const url = baseUrl(doc, o) + path;
+            const verb = method.toUpperCase();
+            if (query.length && o.query) {
+                out.push(verb + " " + url);
+                query.forEach((q, idx) => out.push("    " + (idx ? "&" : "?") + q));
+            } else {
+                out.push(verb + " " + url + (query.length ? "?" + query.join("&") : ""));
+            }
+
+            const headerParams = params.filter(p => p.in === "header");
+            const cookieParams = params.filter(p => p.in === "cookie");
+            const emitted = new Set();
+
+            const { body, ctype } = requestBodyOf(doc, op, params, o);
+            if (ctype) { out.push("Content-Type: " + ctype); emitted.add("content-type"); }
+
+            const accept = o.accept ? acceptOf(doc, op) : null;
+            if (accept) { out.push("Accept: " + accept); emitted.add("accept"); }
+
+            headerParams.forEach(p => {
+                const lk = String(p.name).toLowerCase();
+                if (emitted.has(lk)) return;
+                emitted.add(lk);
+                out.push(p.name + ": " + paramValue(doc, p, o));
+            });
+            if (cookieParams.length) {
+                out.push("Cookie: " + cookieParams.map(p => p.name + "=" + paramValue(doc, p, o)).join("; "));
+            }
+            if (o.auth) {
+                securityHeaders(doc, op).forEach(h => {
+                    const lk = h[0].toLowerCase();
+                    if (emitted.has(lk)) return;
+                    emitted.add(lk);
+                    out.push(h[0] + ": " + h[1]);
+                });
+            }
+
+            if (body !== null) { out.push(""); out.push(body); }
+            return out.join("\n");
+        }
+
+        function securityHeaders(doc, op) {
+            const reqs = op.security || doc.security;
+            if (!Array.isArray(reqs) || !reqs.length) return [];
+            const schemes = (doc.components && doc.components.securitySchemes) || doc.securityDefinitions || {};
+            const first = reqs.find(r => r && Object.keys(r).length);
+            if (!first) return [];
+            const headers = [];
+            Object.keys(first).forEach(nameKey => {
+                const s = deref(doc, schemes[nameKey]);
+                if (!s) return;
+                const type = String(s.type || "").toLowerCase();
+                if (type === "http") {
+                    const scheme = String(s.scheme || "bearer").toLowerCase();
+                    if (scheme === "basic") headers.push(["Authorization", "Basic {{basicAuth}}"]);
+                    else headers.push(["Authorization", "Bearer {{token}}"]);
+                } else if (type === "oauth2" || type === "openidconnect") {
+                    headers.push(["Authorization", "Bearer {{token}}"]);
+                } else if (type === "apikey" && String(s.in || "").toLowerCase() === "header") {
+                    headers.push([s.name || "X-API-Key", "{{apiKey}}"]);
+                } else if (type === "basic") {
+                    headers.push(["Authorization", "Basic {{basicAuth}}"]);
+                }
+            });
+            return headers;
+        }
+
+        function openApiToHttp(doc, o) {
+            const warnings = [];
+            if (!doc || typeof doc !== "object" || Array.isArray(doc)) {
+                return { text: "", count: 0, warnings: ["the document is not an object"] };
+            }
+
+            let paths = doc.paths;
+            if (!paths || typeof paths !== "object") {
+                const keys = Object.keys(doc);
+                const pathish = keys.filter(k => k.startsWith("/"));
+                if (pathish.length) {
+                    paths = {};
+                    pathish.forEach(k => { paths[k] = doc[k]; });
+                }
+            }
+            if (!paths || typeof paths !== "object") {
+                return { text: "", count: 0, warnings: ["no `paths` found — paste a spec or a paths fragment"] };
+            }
+
+            const blocks = [];
+            Object.keys(paths).forEach(pathKey => {
+                const item = deref(doc, paths[pathKey]);
+                if (!item || typeof item !== "object") return;
+                HTTP_METHODS.forEach(m => {
+                    const op = item[m];
+                    if (!op || typeof op !== "object") return;
+                    try { blocks.push(renderOperation(doc, pathKey, m, op, item, o)); }
+                    catch (e) { warnings.push(m.toUpperCase() + " " + pathKey + " failed"); }
+                });
+            });
+
+            if (!blocks.length) warnings.push("no operations found under `paths`");
+
+            const head = [];
+            const title = doc.info && doc.info.title;
+            if (title && o.desc) head.unshift("# " + title + (doc.info.version ? " " + doc.info.version : ""));
+
+            const text = (head.length && blocks.length ? head.join("\n") + "\n" : "") + blocks.join("\n\n");
+            return { text, count: blocks.length, warnings };
+        }
+
+
+        /* =================== IDEA .http → requests =================== */
+
+        var METHOD_RE = /^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|TRACE|CONNECT)\s+(\S.*)$/;
+
+        function parseHttp(text){
+            var lines = text.replace(/\r/g, "").split("\n");
+            var vars = [], reqs = [];
+            var blocks = [{ label: null, lines: [] }];
+            lines.forEach(function(l){
+                var m = /^###(.*)$/.exec(l);
+                if(m){ blocks.push({ label: m[1].trim() || null, lines: [] }); return; }
+                blocks[blocks.length - 1].lines.push(l);
+            });
+            blocks.forEach(function(b){
+                var r = parseHttpBlock(b.lines, b.label, vars);
+                if(r) reqs.push(r);
+            });
+            return { vars: vars, reqs: reqs };
+        }
+
+        function parseHttpBlock(lines, label, vars){
+            var i = 0, n = lines.length, name = null, desc = [], directives = [];
+            for(; i < n; i++){
+                var t = lines[i].trim();
+                if(!t) continue;
+                var cm = /^(?:#|\/\/)\s?(.*)$/.exec(t);
+                if(cm){
+                    var c = cm[1];
+                    var nm = /^@name\s*=?\s*(\S+)/.exec(c);
+                    if(nm){ name = nm[1]; continue; }
+                    if(/^@[\w-]+/.test(c)){ directives.push(t); continue; }
+                    desc.push(c);
+                    continue;
+                }
+                var vm = /^@([\w.-]+)\s*=\s*(.*)$/.exec(t);
+                if(vm){ vars.push([vm[1], vm[2].trim()]); continue; }
+                break;
+            }
+            if(i >= n) return null;
+
+            var first = lines[i].trim(), method = "GET", url = first;
+            var mm = METHOD_RE.exec(first);
+            if(mm){ method = mm[1]; url = mm[2]; }
+            url = url.replace(/\s+HTTP\/[\d.]+$/i, "").trim();
+            i++;
+            while(i < n && /^\s+[?&]/.test(lines[i])){ url += lines[i].trim(); i++; }
+
+            var headers = [];
+            for(; i < n && lines[i].trim() !== ""; i++){
+                var h = lines[i];
+                if(/^\s*(#|\/\/)/.test(h)) continue;
+                var k = h.indexOf(":");
+                if(k > 0) headers.push([h.slice(0, k).trim(), h.slice(k + 1).trim()]);
+            }
+
+            var body = [], tail = [];
+            for(; i < n; i++){
+                if(/^(>>!?|<>|>)\s*\S/.test(lines[i])){ tail = lines.slice(i); break; }
+                body.push(lines[i]);
+            }
+            while(body.length && !body[0].trim()) body.shift();
+            while(body.length && !body[body.length - 1].trim()) body.pop();
+            while(tail.length && !tail[tail.length - 1].trim()) tail.pop();
+
+            return {
+                label: label, name: name, desc: desc, directives: directives,
+                method: method.toUpperCase(), url: url, headers: headers,
+                body: body.length ? body.join("\n") : null, tail: tail
+            };
+        }
+
+        /* ---------- shared helpers ---------- */
+
+        function headerVal(headers, name){
+            var lk = name.toLowerCase();
+            for(var j = 0; j < headers.length; j++) if(headers[j][0].toLowerCase() === lk) return headers[j][1];
+            return null;
+        }
+
+        function prettyJson(body){
+            if(body == null) return body;
+            var t = body.trim();
+            if(t[0] === "{" || t[0] === "["){
+                try{ return JSON.stringify(JSON.parse(t), null, 2); }catch(_){}
+            }
+            return body;
+        }
+
+        function hostify(url, v){
+            var tag = "{{" + (v || "host") + "}}";
+            var m = /^[a-z][\w+.-]*:\/\/[^\/?#\s]*/i.exec(url);
+            if(m) return tag + url.slice(m[0].length);
+            m = /^\{\{\s*[\w.-]+\s*\}\}/.exec(url);
+            if(m) return tag + url.slice(m[0].length);
+            if(url[0] === "/") return tag + url;
+            return url;
+        }
+
+        function pathOf(url){
+            var rest = String(url || "").replace(/^[a-z][\w+.-]*:\/\/[^\/?#\s]*/i, "").replace(/^\{\{[^{}]*\}\}/, "");
+            return rest.split(/[?#]/)[0];
+        }
+
+        function autoName(url){
+            return pathOf(url).split("/").filter(Boolean).slice(-2).join("-").replace(/[^\w.-]/g, "");
+        }
+
+        function unshell(s){
+            return s ? String(s).replace(/\$\{([A-Za-z_]\w*)\}/g, "{{$1}}") : s;
+        }
+
+        function splitQuery(verb, url, o){
+            var q = url.indexOf("?");
+            if(!o.query || q < 0) return [verb + " " + url];
+            var lines = [verb + " " + url.slice(0, q)];
+            url.slice(q + 1).split("&").forEach(function(p, idx){ lines.push("    " + (idx ? "&" : "?") + p); });
+            return lines;
+        }
+
+        function multipartParts(body, ct){
+            var lines = body.replace(/\r/g, "").split("\n");
+            var bm = /boundary=("?)([^";]+)\1/i.exec(ct || "");
+            var boundary = bm ? bm[2].trim() : null;
+            if(!boundary){
+                var f = lines.find(function(l){ return /^--\S/.test(l); });
+                if(f) boundary = f.slice(2).replace(/--$/, "");
+            }
+            if(!boundary) return [];
+            var parts = [], cur = null, inBody = false;
+            lines.forEach(function(l){
+                if(l === "--" + boundary || l === "--" + boundary + "--"){
+                    if(cur) parts.push(cur);
+                    cur = { head: [], body: [] }; inBody = false; return;
+                }
+                if(!cur) return;
+                if(!inBody){ if(l.trim() === "") inBody = true; else cur.head.push(l); return; }
+                cur.body.push(l);
+            });
+            return parts.map(function(p){
+                var cd = p.head.find(function(h){ return /^content-disposition/i.test(h); }) || "";
+                var name = (/\bname="([^"]*)"/i.exec(cd) || [])[1] || "";
+                var filename = (/filename="([^"]*)"/i.exec(cd) || [])[1] || null;
+                while(p.body.length && !p.body[p.body.length - 1].trim()) p.body.pop();
+                var value = p.body.join("\n");
+                var file = /^<\s+(.+)$/.exec(value.trim());
+                return { name: name, filename: filename, file: file ? file[1].trim() : null, value: value };
+            }).filter(function(p){ return p.name; });
+        }
+
+        /* =================== requests → IDEA .http =================== */
+
+        function httpFromModel(m, o){
+            var head = m.vars.map(function(v){ return "@" + v[0] + " = " + v[1]; });
+            var blocks = m.reqs.map(function(r){
+                var b = [r.label ? "### " + r.label : "###"];
+                r.desc.forEach(function(d){ b.push(d ? "# " + d : "#"); });
+                r.directives.forEach(function(d){ b.push(d); });
+                if(o.name){
+                    var nm = o.nameFor(r.name || autoName(r.url));
+                    if(nm) b.push("# @name " + nm);
+                }
+                var url = o.host ? hostify(r.url, o.hostVar) : r.url;
+                splitQuery(r.method, url, o).forEach(function(l){ b.push(l); });
+                r.headers.forEach(function(h){
+                    if(h[0].toLowerCase() !== "content-length") b.push(h[0] + ": " + h[1]);
+                });
+                if(r.body != null){ b.push(""); b.push(prettyJson(r.body)); }
+                if(r.tail.length){ b.push(""); r.tail.forEach(function(l){ b.push(l); }); }
+                return b.join("\n");
+            });
+            return (head.length ? head.join("\n") + "\n\n" : "") + blocks.join("\n\n");
+        }
+
+        /* =================== requests → curl =================== */
+
+        function sq(s){ return "'" + String(s).replace(/'/g, "'\\''") + "'"; }
+
+        function shArg(s){
+            s = String(s);
+            if(!/\{\{\s*[A-Za-z_][\w.-]*\s*\}\}/.test(s)) return sq(s);
+            return '"' + s.replace(/[\\"$`]/g, "\\$&")
+                .replace(/\{\{\s*([A-Za-z_][\w.-]*)\s*\}\}/g, function(m, k){ return "${" + k.replace(/\W/g, "_") + "}"; }) + '"';
+        }
+
+        function toCurl(model, o){
+            var assigns = model.vars.map(function(v){ return v[0].replace(/\W/g, "_") + "=" + sq(v[1]); });
+            var blocks = model.reqs.map(function(r){
+                var url = o.host ? hostify(r.url, o.hostVar) : r.url;
+                var ct = headerVal(r.headers, "content-type") || "";
+                var multipart = r.body != null && /multipart\/form-data/i.test(ct);
+                var first = "curl";
+                if(r.method === "HEAD") first += " -I";
+                else if(r.method !== "GET") first += " -X " + r.method;
+                var parts = [first + " " + shArg(url)];
+                r.headers.forEach(function(h){
+                    var lk = h[0].toLowerCase();
+                    if(lk === "content-length") return;
+                    if(multipart && lk === "content-type") return;
+                    parts.push("-H " + shArg(h[0] + ": " + h[1]));
+                });
+                if(r.body != null && r.body !== ""){
+                    var t = r.body.trim();
+                    var file = /^<\s+(\S.*)$/.exec(t);
+                    if(multipart){
+                        multipartParts(r.body, ct).forEach(function(p){
+                            parts.push("-F " + sq(p.name + "=" + (p.file ? "@" + p.file : p.value)));
+                        });
+                    } else if(file && t.indexOf("\n") < 0){
+                        parts.push("--data-binary " + sq("@" + file[1].trim()));
+                    } else {
+                        parts.push("--data-raw " + sq(prettyJson(r.body)));
+                    }
+                }
+                var lines = [];
+                if(r.label) lines.push("# " + r.label);
+                lines.push(parts.join(" \\\n  "));
+                return lines.join("\n");
+            });
+            return {
+                text: (assigns.length ? assigns.join("\n") + "\n\n" : "") + blocks.join("\n\n"),
+                count: blocks.length, warns: []
+            };
+        }
+
+        /* =================== requests → OpenAPI =================== */
+
+        function typedValue(s){
+            s = String(s);
+            if(/^-?\d+$/.test(s) && Number.isSafeInteger(+s)) return +s;
+            if(/^-?\d+\.\d+$/.test(s)) return parseFloat(s);
+            if(s === "true" || s === "false") return s === "true";
+            return s;
+        }
+
+        function isVarOnly(s){ return /^\{\{[^{}]+\}\}$/.test(String(s).trim()); }
+
+        function dec(s){ try{ return decodeURIComponent(String(s).replace(/\+/g, " ")); }catch(_){ return s; } }
+
+        function inferSchema(v){
+            if(v === null || v === undefined) return { nullable: true };
+            if(Array.isArray(v)) return { type: "array", items: v.length ? inferSchema(v[0]) : {} };
+            if(typeof v === "object"){
+                var props = {};
+                Object.keys(v).forEach(function(k){ props[k] = inferSchema(v[k]); });
+                return { type: "object", properties: props };
+            }
+            if(typeof v === "boolean") return { type: "boolean" };
+            if(typeof v === "number"){
+                if(!Number.isInteger(v)) return { type: "number" };
+                return Math.abs(v) > 2147483647 ? { type: "integer", format: "int64" } : { type: "integer" };
+            }
+            var s = { type: "string" };
+            if(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(v)) s.format = "date-time";
+            else if(/^\d{4}-\d{2}-\d{2}$/.test(v)) s.format = "date";
+            else if(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v)) s.format = "uuid";
+            return s;
+        }
+
+        function parseJsonLoose(text){
+            try{ return { ok: true, value: JSON.parse(text) }; }catch(_){}
+            // IntelliJ bodies often hold bare {{vars}}; quote them so the rest still parses
+            var fixed = text.replace(/"(?:[^"\\]|\\.)*"|\{\{[^{}]*\}\}/g, function(m){ return m[0] === '"' ? m : JSON.stringify(m); });
+            try{ return { ok: true, value: JSON.parse(fixed) }; }catch(_){ return { ok: false }; }
+        }
+
+        function paramOf(name, where, v){
+            var p = { name: name, in: where };
+            if(where === "path") p.required = true;
+            var val = isVarOnly(v) ? "" : typedValue(v);
+            p.schema = inferSchema(val);
+            if(v !== "" && !isVarOnly(v)) p.example = val;
+            return p;
+        }
+
+        function requestBodyFrom(r, ct){
+            if(r.body == null) return null;
+            var body = r.body, t = body.trim(), media = {}, type = ct;
+            var file = /^<\s+(\S.*)$/.exec(t);
+            if(file && t.indexOf("\n") < 0){
+                type = type || "application/octet-stream";
+                media.schema = { type: "string", format: "binary" };
+            } else if(/multipart\/form-data/i.test(ct || "")){
+                type = "multipart/form-data";
+                var props = {}, ex = {}, hasEx = false;
+                multipartParts(body, ct).forEach(function(p){
+                    if(p.file || p.filename){ props[p.name] = { type: "string", format: "binary" }; return; }
+                    var tv = typedValue(p.value);
+                    props[p.name] = inferSchema(tv);
+                    if(!isVarOnly(p.value)){ ex[p.name] = tv; hasEx = true; }
+                });
+                media.schema = { type: "object", properties: props };
+                if(hasEx) media.example = ex;
+            } else if(/json/i.test(ct || "") || (!ct && (t[0] === "{" || t[0] === "["))){
+                type = ct || "application/json";
+                var j = parseJsonLoose(t);
+                if(j.ok){ media.schema = inferSchema(j.value); media.example = j.value; }
+                else { media.schema = { type: "string" }; media.example = body; }
+            } else if(/x-www-form-urlencoded/i.test(ct || "") || (!ct && /^[^\s=&]+=[^\s&]*(&[^\s=&]+=[^\s&]*)*$/.test(t))){
+                type = ct || "application/x-www-form-urlencoded";
+                var fp = {}, fe = {};
+                t.split("&").filter(Boolean).forEach(function(pair){
+                    var eq = pair.indexOf("=");
+                    var k = dec(eq < 0 ? pair : pair.slice(0, eq)), v = eq < 0 ? "" : dec(pair.slice(eq + 1));
+                    var tv = isVarOnly(v) ? "" : typedValue(v);
+                    fp[k] = inferSchema(tv);
+                    if(v !== "" && !isVarOnly(v)) fe[k] = tv;
+                });
+                media.schema = { type: "object", properties: fp };
+                if(Object.keys(fe).length) media.example = fe;
+            } else {
+                type = type || "text/plain";
+                media.schema = { type: "string" };
+                media.example = body;
+            }
+            var content = {};
+            content[type.split(";")[0].trim()] = media;
+            return { content: content };
+        }
+
+        function toOpenApi(model, o){
+            var warns = [], paths = {}, servers = [], seenServer = {}, schemes = {}, opIds = {}, count = 0;
+            var known = {};
+            model.vars.forEach(function(v){ if(!/\{\{/.test(v[1])) known[v[0]] = v[1]; });
+
+            model.reqs.forEach(function(r){
+                var url = r.url.replace(/\{\{\s*([\w.-]+)\s*\}\}/g, function(m, k){ return k in known ? known[k] : m; });
+                var rest = url, server = null;
+                var mv = /^\{\{\s*([\w.-]+)\s*\}\}(.*)$/.exec(url);
+                var mr = /^([a-z][\w+.-]*:\/\/[^\/?#\s]*)(.*)$/i.exec(url);
+                if(mv){
+                    rest = mv[2];
+                    server = { url: "{" + mv[1] + "}", variables: {} };
+                    server.variables[mv[1]] = { default: "http://localhost" };
+                } else if(mr){
+                    rest = mr[2];
+                    if(o.host){
+                        server = { url: "{" + o.hostVar + "}", variables: {} };
+                        server.variables[o.hostVar] = { default: mr[1] };
+                    } else server = { url: mr[1] };
+                }
+                if(server){
+                    var sk = JSON.stringify(server);
+                    if(!seenServer[sk]){ seenServer[sk] = 1; servers.push(server); }
+                }
+
+                rest = rest.replace(/#.*$/, "");
+                var qi = rest.indexOf("?");
+                var rawPath = (qi < 0 ? rest : rest.slice(0, qi)) || "/";
+                var qs = qi < 0 ? "" : rest.slice(qi + 1);
+                var params = [];
+                var path = rawPath.replace(/\{\{\s*([\w.-]+)\s*\}\}/g, function(m, k){
+                    params.push({ name: k, in: "path", required: true, schema: { type: "string" } });
+                    return "{" + k + "}";
+                });
+                if(path[0] !== "/") path = "/" + path;
+
+                var method = r.method.toLowerCase();
+                if(HTTP_METHODS.indexOf(method) < 0){ warns.push(r.method + " " + path + " skipped"); return; }
+                paths[path] = paths[path] || {};
+                if(paths[path][method]){ warns.push("duplicate " + r.method + " " + path + " skipped"); return; }
+
+                qs.split("&").filter(Boolean).forEach(function(pair){
+                    var eq = pair.indexOf("=");
+                    params.push(paramOf(dec(eq < 0 ? pair : pair.slice(0, eq)), "query", eq < 0 ? "" : dec(pair.slice(eq + 1))));
+                });
+
+                var ct = null, accept = null, security = null;
+                r.headers.forEach(function(h){
+                    var lk = h[0].toLowerCase(), v = h[1];
+                    if(lk === "content-type"){ ct = v; return; }
+                    if(lk === "accept"){ accept = v; return; }
+                    if(lk === "content-length" || lk === "host") return;
+                    if(lk === "authorization"){
+                        if(/^bearer\b/i.test(v)){ schemes.bearerAuth = { type: "http", scheme: "bearer" }; security = "bearerAuth"; return; }
+                        if(/^basic\b/i.test(v)){ schemes.basicAuth = { type: "http", scheme: "basic" }; security = "basicAuth"; return; }
+                    }
+                    if(lk === "cookie"){
+                        v.split(/;\s*/).filter(Boolean).forEach(function(c){
+                            var e = c.indexOf("=");
+                            params.push(paramOf(e < 0 ? c : c.slice(0, e), "cookie", e < 0 ? "" : c.slice(e + 1)));
+                        });
+                        return;
+                    }
+                    params.push(paramOf(h[0], "header", v));
+                });
+
+                var op = {};
+                if(r.label) op.summary = r.label;
+                var d = r.desc.join("\n").trim();
+                if(d) op.description = d;
+                if(o.name){
+                    var id = o.nameFor(r.name || autoName(r.url) || slug(method + "-" + path));
+                    if(id){
+                        var baseId = id, k2 = 2;
+                        while(opIds[id]) id = baseId + "-" + k2++;
+                        opIds[id] = 1;
+                        op.operationId = id;
+                    }
+                }
+                if(params.length) op.parameters = params;
+                var rb = requestBodyFrom(r, ct);
+                if(rb) op.requestBody = rb;
+                var resp = { description: "OK" };
+                var acc = accept && accept.split(",")[0].split(";")[0].trim();
+                if(acc && acc !== "*/*"){ resp.content = {}; resp.content[acc] = {}; }
+                op.responses = { "200": resp };
+                if(security){ var s = {}; s[security] = []; op.security = [s]; }
+                paths[path][method] = op;
+                count++;
+            });
+
+            var doc = { openapi: "3.0.3", info: { title: "Converted requests", version: "1.0.0" } };
+            if(servers.length) doc.servers = servers;
+            doc.paths = paths;
+            if(Object.keys(schemes).length) doc.components = { securitySchemes: schemes };
+            return { text: count ? dumpYaml(doc) : "", count: count, warns: warns };
+        }
+
+        /* ---------- YAML writer ---------- */
+
+        var YAML_WORDS = /^(true|false|yes|no|on|off|null|y|n|~)$/i;
+        var PLAIN = /^[\p{L}_\/][\p{L}\p{N}_ .\/(){}@,$+*-]*$/u;
+
+        function yScalar(v){
+            if(v === null || v === undefined) return "null";
+            if(typeof v === "number") return isFinite(v) ? String(v) : ".nan";
+            if(typeof v === "boolean") return String(v);
+            var s = String(v);
+            if(s !== "" && PLAIN.test(s) && !/\s$/.test(s) && !YAML_WORDS.test(s)) return s;
+            return JSON.stringify(s);
+        }
+
+        function sp(n){ return " ".repeat(n); }
+
+        function yPut(out, pad, prefix, v, childInd){
+            if(Array.isArray(v)){
+                if(!v.length){ out.push(pad + prefix + " []"); return; }
+                out.push(pad + prefix);
+                v.forEach(function(it){ yItem(out, childInd, it); });
+                return;
+            }
+            if(v && typeof v === "object"){
+                var ks = Object.keys(v);
+                if(!ks.length){ out.push(pad + prefix + " {}"); return; }
+                out.push(pad + prefix);
+                ks.forEach(function(k){ yPut(out, sp(childInd), yScalar(k) + ":", v[k], childInd + 2); });
+                return;
+            }
+            if(typeof v === "string" && v.indexOf("\n") >= 0){
+                var chomp = /\n$/.test(v) ? "" : "-";
+                out.push(pad + prefix + " |" + chomp);
+                v.replace(/\n$/, "").split("\n").forEach(function(l){ out.push(l ? sp(childInd) + l : ""); });
+                return;
+            }
+            out.push(pad + prefix + " " + yScalar(v));
+        }
+
+        function yItem(out, ind, it){
+            if(it && typeof it === "object" && !Array.isArray(it) && Object.keys(it).length){
+                var tmp = [];
+                Object.keys(it).forEach(function(k){ yPut(tmp, sp(ind + 2), yScalar(k) + ":", it[k], ind + 4); });
+                tmp[0] = sp(ind) + "- " + tmp[0].slice(ind + 2);
+                tmp.forEach(function(l){ out.push(l); });
+                return;
+            }
+            yPut(out, sp(ind), "-", it, ind + 2);
+        }
+
+        function dumpYaml(v){
+            var out = [];
+            if(v && typeof v === "object" && !Array.isArray(v)){
+                Object.keys(v).forEach(function(k){ yPut(out, "", yScalar(k) + ":", v[k], 2); });
+            } else if(Array.isArray(v)){
+                v.forEach(function(it){ yItem(out, 0, it); });
+            } else out.push(yScalar(v));
+            return out.join("\n") + "\n";
+        }
+
+
+        /* =================== UI =================== */
+
+        var $ = function(s){ return document.querySelector(s); };
+        var srcEl = $("#src"), outEl = $("#out");
+
+        var OPT = {
+            host:false, query:false, name:true,                                           // curl + .http
+            body:true, desc:true, allp:true, vars:false, accept:true, auth:true, ohost:true, // openapi
+            hostVar:"host", nameValue:""
+        };
+        var TARGET = "http";
+        var SRC = null;
+        var STORE = "curl-to-http.v2";
+        try{
+            var saved = JSON.parse(localStorage.getItem(STORE) || "{}");
+            if(saved.hostVar) OPT.hostVar = saved.hostVar;
+            if(["http","curl","openapi"].indexOf(saved.target) >= 0) TARGET = saved.target;
+        }catch(_){}
+        function persist(){
+            try{ localStorage.setItem(STORE, JSON.stringify({ hostVar: OPT.hostVar, target: TARGET })); }catch(_){}
+        }
+
+        var SEGS = {
+            curl: ["host","query","name"],
+            http: ["host","query","name"],
+            openapi: ["body","desc","allp","accept","auth","vars","ohost","query","name"]
+        };
+        var DROP = { http: [], curl: ["query","name"], openapi: ["query"] };
+        var HOLD = { host: "host", ohost: "host", name: "name" };
+        var FILES = { http: "requests.http", curl: "requests.sh", openapi: "openapi.yaml" };
+
+        function labelOf(key){
+            if(HOLD[key] === "host") return "{{" + OPT.hostVar + "}}";
+            if(key === "name") return OPT.nameValue ? "@name " + OPT.nameValue : "@name";
+            return { body:"body", desc:"notes", allp:"optional", accept:"accept", auth:"auth", vars:"{{vars}}", query:"query" }[key];
+        }
+
+        var nameIdx = 0;
+        function nameFor(auto){
+            var i = nameIdx++;
+            if(OPT.nameValue) return i ? OPT.nameValue + "-" + (i + 1) : OPT.nameValue;
+            return auto || "";
+        }
+        function sameName(auto){ return auto || ""; }
+
+        function detectMode(text){
+            var t = text.trim();
+            if(!t) return null;
+            var f = "";
+            var ls = t.split("\n");
+            for(var j = 0; j < ls.length; j++){
+                var s = ls[j].trim();
+                if(!s || (/^(#|\/\/)/.test(s) && !/^###/.test(s))) continue;
+                f = s; break;
+            }
+            if(/^(?:[\w.\/\\:-]*[\/\\])?curl(?:\.exe)?(?:\s|$)/i.test(f)) return "curl";
+            if(/^###/.test(f) || METHOD_RE.test(f) || /^@[\w.-]+\s*=/.test(f) || /^(https?:\/\/|\{\{)\S*$/i.test(f)) return "http";
+            if(/(^|\n)\s*(?:[\w./\\-]*\/)?curl(?:\.exe)?[\s'"]/i.test("\n" + t)) return "curl";
+            if(/^\s*"?(openapi|swagger)"?\s*:/mi.test(t)) return "openapi";
+            if(/^\s*"?paths"?\s*:/mi.test(t)) return "openapi";
+            if(/^\s*"?\/[^\s:"]*"?\s*:\s*\{?\s*$/m.test(t)) return "openapi";
+            if(/^\s*(get|post|put|patch|delete|head|options):\s*$/mi.test(t)) return "openapi";
+            if(t[0] === "{") return "openapi";
+            return "unknown";
+        }
+
+        /* ---------- toggles, with hold-to-edit on host and @name ---------- */
+
+        function segKeys(){
+            if(SRC === "openapi" && TARGET === "openapi") return [];
+            var drop = DROP[TARGET];
+            return SEGS[SEGS[SRC] ? SRC : "http"].filter(function(k){ return drop.indexOf(k) < 0; });
+        }
+
+        function buildSeg(){
+            var seg = $("#seg");
+            seg.innerHTML = '<span class="lbl">out</span>';
+            var keys = segKeys();
+            seg.hidden = !keys.length;
+            keys.forEach(function(key){
+                var b = document.createElement("button");
+                b.type = "button";
+                b.textContent = labelOf(key);
+                b.setAttribute("aria-pressed", String(!!OPT[key]));
+                var hold = HOLD[key], timer = null, held = false;
+                if(hold){
+                    b.classList.add("hold");
+                    b.title = hold === "host" ? "Hold (or right-click) to rename the host variable"
+                        : "Hold (or right-click) to set the request name";
+                    b.addEventListener("pointerdown", function(e){
+                        if(e.button !== 0) return;
+                        held = false;
+                        clearTimeout(timer);
+                        timer = setTimeout(function(){ held = true; openPop(b, key); }, 450);
+                    });
+                    ["pointerup","pointerleave","pointercancel"].forEach(function(ev){
+                        b.addEventListener(ev, function(){ clearTimeout(timer); });
+                    });
+                    b.addEventListener("contextmenu", function(e){
+                        e.preventDefault();
+                        clearTimeout(timer);
+                        if(!held) openPop(b, key);
+                    });
+                }
+                b.addEventListener("click", function(e){
+                    if(held){ held = false; return; }
+                    if(hold && e.altKey){ openPop(b, key); return; }
+                    OPT[key] = !OPT[key];
+                    b.setAttribute("aria-pressed", String(OPT[key]));
+                    run();
+                });
+                seg.appendChild(b);
+            });
+        }
+
+        var pop = $("#pop"), popIn = $("#pop-i"), popKey = null;
+
+        function openPop(btn, key){
+            popKey = key;
+            var isHost = HOLD[key] === "host";
+            $("#pop-l").textContent = isHost ? "Host variable" : "Request name";
+            $("#pop-h").textContent = isHost ? "Becomes {{name}} in place of scheme and host"
+                : "Leave empty for names from the path. Extra requests get -2, -3";
+            popIn.value = isHost ? OPT.hostVar : OPT.nameValue;
+            popIn.placeholder = isHost ? "host" : "from the path";
+            pop.hidden = false;
+            var r = btn.getBoundingClientRect();
+            pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - pop.offsetWidth - 8)) + "px";
+            pop.style.top = (r.bottom + 6) + "px";
+            popIn.focus();
+            popIn.select();
+        }
+
+        function closePop(commit){
+            if(pop.hidden) return;
+            var key = popKey;
+            pop.hidden = true;
+            popKey = null;
+            if(commit){
+                var v = popIn.value.trim().replace(/\s+/g, "-").replace(/[^\p{L}\p{N}_.-]/gu, "");
+                if(HOLD[key] === "host"){ OPT.hostVar = v || "host"; OPT[key] = true; persist(); }
+                else { OPT.nameValue = v; if(v) OPT.name = true; }
+            }
+            buildSeg();
+            run();
+        }
+
+        popIn.addEventListener("keydown", function(e){
+            if(e.key === "Enter"){ e.preventDefault(); closePop(true); }
+            else if(e.key === "Escape"){ e.preventDefault(); closePop(false); }
+        });
+        popIn.addEventListener("blur", function(){ closePop(true); });
+
+        /* ---------- conversions ---------- */
+
+        function uniq(list){ return list.filter(function(w, i, a){ return w && a.indexOf(w) === i; }); }
+
+        function runCurl(src, o){
+            var groups;
+            try{ groups = splitCurls(tokenize(src)); }
+            catch(e){ return { text:"", count:0, err: String(e && e.message || e) }; }
+            if(!groups.length){
+                return { text:"", count:0, err:"No curl found. The command has to start with `curl`." };
+            }
+            var warns = [], blocks = [];
+            groups.forEach(function(g){
+                var req = parseCurl(g);
+                if(!req.url){ warns.push("one command had no URL, skipped"); return; }
+                req.url = unshell(req.url);
+                req.headers = req.headers.map(function(h){ return [h[0], unshell(h[1])]; });
+                req.warnings.forEach(function(w){ warns.push("ignored " + w); });
+                blocks.push(render(req, o));
+            });
+            return {
+                text: blocks.join("\n\n"),
+                count: blocks.length,
+                cnt: groups.length > 1 ? groups.length + " commands" : "",
+                err: uniq(warns).join(" · ")
+            };
+        }
+
+        function pathCountOf(doc){
+            var paths = doc && typeof doc.paths === "object" && doc.paths ? doc.paths : doc;
+            if(!paths || typeof paths !== "object") return "";
+            var n = Object.keys(paths).filter(function(k){ return k.indexOf("/") === 0; }).length;
+            return n ? n + (n > 1 ? " paths" : " path") : "";
+        }
+
+        function readSpec(src){
+            var doc;
+            try{ doc = parseSpec(src); }
+            catch(e){ return { err: "Could not read the spec: " + (e && e.message || e) }; }
+            if(!doc) return { err: "Could not read the spec." };
+            return { doc: doc };
+        }
+
+        function runOpenApi(src, o){
+            var s = readSpec(src);
+            if(s.err) return { text:"", count:0, err: s.err };
+            var res = openApiToHttp(s.doc, o);
+            return { text: res.text, count: res.count, cnt: pathCountOf(s.doc), err: uniq(res.warnings).join(" · ") };
+        }
+
+        function convert(src, mode, target){
+            if(mode === "unknown"){
+                return { text:"", count:0, err:"Can't tell the format. Paste a curl command, IDEA .http requests, or an OpenAPI spec." };
+            }
+            var fin = Object.assign({}, OPT, { host: mode === "openapi" ? OPT.ohost : OPT.host, nameFor: nameFor });
+
+            if(mode === "openapi" && target === "openapi"){
+                var s = readSpec(src);
+                if(s.err) return { text:"", count:0, err: s.err };
+                var ops = 0, p = s.doc.paths || s.doc;
+                if(p && typeof p === "object") Object.keys(p).forEach(function(k){
+                    if(p[k] && typeof p[k] === "object") HTTP_METHODS.forEach(function(m){ if(p[k][m]) ops++; });
+                });
+                return { text: dumpYaml(s.doc), count: ops, cnt: pathCountOf(s.doc) };
+            }
+
+            if(target === "http"){
+                if(mode === "curl") return runCurl(src, fin);
+                if(mode === "openapi") return runOpenApi(src, fin);
+                var hm = parseHttp(src);
+                if(!hm.reqs.length) return { text:"", count:0, err:"No request line found." };
+                return { text: httpFromModel(hm, fin), count: hm.reqs.length, cnt: hm.reqs.length > 1 ? hm.reqs.length + " requests" : "" };
+            }
+
+            var model, cnt = "", warn = "";
+            if(mode === "http"){
+                model = parseHttp(src);
+                cnt = model.reqs.length > 1 ? model.reqs.length + " requests" : "";
+            } else {
+                // go through .http first, host and names are applied at the end
+                var mid = Object.assign({}, OPT, { host:false, ohost:false, query:false, name:true, nameFor: sameName });
+                var r = mode === "curl" ? runCurl(src, mid) : runOpenApi(src, mid);
+                if(!r.text) return r;
+                model = parseHttp(r.text);
+                cnt = r.cnt; warn = r.err;
+            }
+            if(!model.reqs.length) return { text:"", count:0, cnt: cnt, err: warn || "No requests found." };
+            var res = target === "curl" ? toCurl(model, fin) : toOpenApi(model, fin);
+            return { text: res.text, count: res.count, cnt: cnt, err: uniq([warn].concat(res.warns)).join(" · ") };
+        }
+
+        function markFmt(mode){
+            var f = $("#fmts");
+            f.classList.toggle("known", !!mode && mode !== "unknown");
+            f.querySelectorAll("[data-f]").forEach(function(s){ s.classList.toggle("on", s.getAttribute("data-f") === mode); });
+        }
+
+        function run(){
+            var text = srcEl.value;
+            nameIdx = 0;
+            var mode = text.trim() ? detectMode(text) : null;
+            if(mode !== SRC){ SRC = mode; buildSeg(); }
+            markFmt(mode);
+            if(!mode){
+                outEl.value = ""; $("#err").textContent = "";
+                $("#cnt").textContent = ""; $("#ocnt").textContent = "";
+                return;
+            }
+            var r;
+            try{ r = convert(text, mode, TARGET); }
+            catch(e){ r = { text:"", count:0, err:"Conversion failed: " + (e && e.message || e) }; }
+            outEl.value = r.text || "";
+            $("#cnt").textContent = r.cnt || "";
+            var unit = TARGET === "openapi" ? "operation" : "request";
+            $("#ocnt").textContent = r.count ? r.count + " " + unit + (r.count > 1 ? "s" : "") : "";
+            $("#err").textContent = r.err || "";
+        }
+
+        var timer = null;
+        srcEl.addEventListener("input", function(){
+            clearTimeout(timer);
+            timer = setTimeout(run, 120);
+        });
+
+        var sel = $("#target");
+        var tbtns = Array.prototype.slice.call(document.querySelectorAll("#tfmts [data-t]"));
+        function showTarget(){
+            sel.value = TARGET;
+            tbtns.forEach(function(b){ b.setAttribute("aria-checked", String(b.getAttribute("data-t") === TARGET)); });
+        }
+        function setTarget(v){
+            if(v === TARGET) return;
+            TARGET = v;
+            showTarget();
+            persist();
+            buildSeg();
+            run();
+        }
+        showTarget();
+        sel.addEventListener("change", function(){ setTarget(sel.value); });
+        tbtns.forEach(function(b){ b.addEventListener("click", function(){ setTarget(b.getAttribute("data-t")); }); });
+
+        $("#clear").onclick = function(){ srcEl.value = ""; run(); srcEl.focus(); };
+
+        /* ---------- clipboard: buttons and keys ---------- */
+
+        var toastTimer = null;
+        function toast(msg){
+            var t = $("#toast");
+            t.textContent = msg; t.classList.add("on");
+            clearTimeout(toastTimer);
+            toastTimer = setTimeout(function(){ t.classList.remove("on"); }, 1400);
+        }
+
+        async function copyOut(){
+            var text = outEl.value;
+            if(!text){ toast("Nothing to copy yet"); return; }
+            try{ await navigator.clipboard.writeText(text); toast("Copied"); return; }
+            catch(_){}
+            var back = document.activeElement, ok = false;
+            outEl.focus(); outEl.select();
+            try{ ok = document.execCommand("copy"); }catch(_){}
+            outEl.setSelectionRange(0, 0);
+            if(back && back.focus) back.focus();
+            toast(ok ? "Copied" : "Clipboard unavailable");
+        }
+
+        function hasSelection(){
+            var a = document.activeElement;
+            if(a && (a.tagName === "TEXTAREA" || a.tagName === "INPUT") &&
+                typeof a.selectionStart === "number" && a.selectionStart !== a.selectionEnd) return true;
+            var s = window.getSelection && window.getSelection();
+            return !!(s && String(s).length);
+        }
+
+        $("#copy").onclick = copyOut;
+
+        // Ctrl+C with nothing selected copies the result (KeyC so it works on any layout)
+        document.addEventListener("keydown", function(e){
+            if(!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || e.code !== "KeyC") return;
+            if(hasSelection()) return;
+            e.preventDefault();
+            copyOut();
+        });
+
+        // Ctrl+V anywhere outside the input replaces the input
+        document.addEventListener("paste", function(e){
+            if(e.target === srcEl || e.target === popIn) return;
+            var text = e.clipboardData && e.clipboardData.getData("text");
+            if(!text) return;
+            e.preventDefault();
+            srcEl.value = text;
+            clearTimeout(timer);
+            run();
+            toast("Pasted into input");
+        });
+
+        function anchorSave(text, name){
+            var url = URL.createObjectURL(new Blob([text], {type:"text/plain;charset=utf-8"}));
+            var a = document.createElement("a");
+            a.href = url; a.download = name;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(function(){ URL.revokeObjectURL(url); }, 0);
+        }
+
+        function saveProblem(e){
+            var code = e && e.code;
+            if(code === "declined") return "Save cancelled";
+            if(code === "rate_limited") return "A save prompt is already open";
+            if(code === "too_large") return "Too big to save, copy it instead";
+            return "Saving is unavailable here, use Copy";
+        }
+
+        $("#save").onclick = async function(){
+            var text = outEl.value;
+            if(!text) return;
+            var name = FILES[TARGET];
+            if(!downloads){ anchorSave(text, name); toast("Saved " + name); return; }
+            try{
+                await downloads.save({ filename: name, data: text });
+                toast("Saved " + name);
+            }catch(e){
+                if(e && e.code === "rejected_extension"){
+                    try{
+                        await downloads.save({ filename: name + ".txt", data: text });
+                        toast("Saved as " + name + ".txt, drop the .txt");
+                    }catch(e2){ toast(saveProblem(e2)); }
+                    return;
+                }
+                toast(saveProblem(e));
+            }
+        };
+
+        buildSeg();
+        run();
+        srcEl.focus();
+    })();
+</script>
+</body>
+</html>
