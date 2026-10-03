@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>curl ⇄ OpenAPI ⇄ .http · tests</title>
+    <link rel="stylesheet" href="https://code.jquery.com/qunit/qunit-2.26.0.css">
+    <style>
+        #boot{display:none;padding:10px 16px;font-family:monospace;background:#7a1d0c;color:#ffd9c9}
+    </style>
+</head>
+<body>
+<div id="boot"></div>
+<div id="qunit"></div>
+<div id="qunit-fixture"></div>
+<script src="https://code.jquery.com/qunit/qunit-2.26.0.js"></script>
+
+<script>
+    QUnit.config.autostart = false;
+
+    var APP = 'curl-to-http.html';
+
+    fetch(APP)
+        .then(function(r){ if(!r.ok) throw new Error(APP + ' -> HTTP ' + r.status); return r.text(); })
+        .then(function(html){
+            var m = html.match(/\/\* =+ CORE =+ \*\/([\s\S]*?)\/\* =+ \/CORE =+ \*\//);
+            if(!m) throw new Error('CORE markers not found in ' + APP);
+            (0, eval)(m[1]);                       // indirect eval -> globals: detectMode/convert/DEFAULTS
+            if(typeof convert !== 'function' || typeof detectMode !== 'function') throw new Error('convert()/detectMode() did not reach global scope');
+            QUnit.start();
+        })
+        .catch(function(e){
+            var b = document.getElementById('boot');
+            b.style.display = 'block';
+            b.textContent = 'Boot failed: ' + e.message + '  —  serve over http:// (python3 -m http.server)';
+        });
+</script>
+
+<script>
+    QUnit.test('in → out', function(a){
+
+        var n = 0;
+
+        /* check(input, expected output): both exactly as in the app's input and output boxes,
+           the output format is taken from what the expected text looks like */
+        function check(input, expected){
+            var tag = 'case ' + (++n);
+            var target = detectMode(expected);
+            var out = convert(input, detectMode(input), target).text;
+            a.strictEqual(out, expected, tag + ' · ' + detectMode(input) + ' → ' + target);
+        }
+
+        check(`curl 'https://shop.example.com/api/v1/orders/search?page=0&size=20&sort=createdAt,desc' \\
+  -H 'accept: application/json, text/plain, */*' \\
+  -H 'accept-language: en-US,en;q=0.9' \\
+  -H 'authorization: Bearer abc.def.ghi' \\
+  -H 'content-type: application/json' \\
+  -H 'origin: https://shop.example.com' \\
+  -H 'referer: https://shop.example.com/orders' \\
+  --data-raw '{"filter":{"statusIds":[1,2,5],"paid":true,"customerId":"c-1001"},"query":"café latte"}' \\
+  --compressed
+
+curl 'https://shop.example.com/api/v1/orders/42/attachments' \\
+  -H 'authorization: Bearer abc.def.ghi' \\
+  -F 'file=@/home/me/receipt-42.pdf' \\
+  -F 'kind=RECEIPT'
+
+curl -X DELETE 'https://shop.example.com/api/v1/orders/42/attachments/7' \\
+  -H 'authorization: Bearer abc.def.ghi'`,
+            `###
+# @name orders-search
+POST https://shop.example.com/api/v1/orders/search?page=0&size=20&sort=createdAt,desc
+accept: application/json, text/plain, */*
+accept-language: en-US,en;q=0.9
+authorization: Bearer abc.def.ghi
+content-type: application/json
+origin: https://shop.example.com
+referer: https://shop.example.com/orders
+
+{
+  "filter": {
+    "statusIds": [
+      1,
+      2,
+      5
+    ],
+    "paid": true,
+    "customerId": "c-1001"
+  },
+  "query": "café latte"
+}
+
+###
+# @name 42-attachments
+POST https://shop.example.com/api/v1/orders/42/attachments
+authorization: Bearer abc.def.ghi
+Content-Type: multipart/form-data; boundary=WebAppBoundary
+
+--WebAppBoundary
+Content-Disposition: form-data; name="file"; filename="receipt-42.pdf"
+
+< /home/me/receipt-42.pdf
+--WebAppBoundary
+Content-Disposition: form-data; name="kind"
+
+RECEIPT
+--WebAppBoundary--
+
+###
+# @name attachments-7
+DELETE https://shop.example.com/api/v1/orders/42/attachments/7
+authorization: Bearer abc.def.ghi`);
+
+        check(`curl 'https://shop.example.com/api/v1/orders/search?page=0&size=20&sort=createdAt,desc' \\
+  -H 'accept: application/json, text/plain, */*' \\
+  -H 'accept-language: en-US,en;q=0.9' \\
+  -H 'authorization: Bearer abc.def.ghi' \\
+  -H 'content-type: application/json' \\
+  -H 'origin: https://shop.example.com' \\
+  -H 'referer: https://shop.example.com/orders' \\
+  --data-raw '{"filter":{"statusIds":[1,2,5],"paid":true,"customerId":"c-1001"},"query":"café latte"}' \\
+  --compressed
+
+curl 'https://shop.example.com/api/v1/orders/42/attachments' \\
+  -H 'authorization: Bearer abc.def.ghi' \\
+  -F 'file=@/home/me/receipt-42.pdf' \\
+  -F 'kind=RECEIPT'
+
+curl -X DELETE 'https://shop.example.com/api/v1/orders/42/attachments/7' \\
+  -H 'authorization: Bearer abc.def.ghi'`,
+            `openapi: "3.0.3"
+info:
+  title: Converted requests
+  version: "1.0.0"
+servers:
+  - url: "https://shop.example.com"
+paths:
+  /api/v1/orders/search:
+    post:
+      operationId: orders-search
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+          example: 0
+        - name: size
+          in: query
+          schema:
+            type: integer
+          example: 20
+        - name: sort
+          in: query
+          schema:
+            type: string
+          example: createdAt,desc
+        - name: accept-language
+          in: header
+          schema:
+            type: string
+          example: "en-US,en;q=0.9"
+        - name: origin
+          in: header
+          schema:
+            type: string
+          example: "https://shop.example.com"
+        - name: referer
+          in: header
+          schema:
+            type: string
+          example: "https://shop.example.com/orders"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                filter:
+                  type: object
+                  properties:
+                    statusIds:
+                      type: array
+                      items:
+                        type: integer
+                    paid:
+                      type: boolean
+                    customerId:
+                      type: string
+                query:
+                  type: string
+            example:
+              filter:
+                statusIds:
+                  - 1
+                  - 2
+                  - 5
+                paid: true
+                customerId: c-1001
+              query: café latte
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json: {}
+      security:
+        - bearerAuth: []
+  /api/v1/orders/42/attachments:
+    post:
+      operationId: "42-attachments"
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                kind:
+                  type: string
+            example:
+              kind: RECEIPT
+      responses:
+        "200":
+          description: OK
+      security:
+        - bearerAuth: []
+  /api/v1/orders/42/attachments/7:
+    delete:
+      operationId: attachments-7
+      responses:
+        "200":
+          description: OK
+      security:
+        - bearerAuth: []
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+`);
+
+        check(`@host = https://api.example.com/library
+@token = abc.def.ghi
+
+### Search books
+# @name search
+POST {{host}}/v1/books/search?page=0&size=20
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "filter": {"genreIds": [3, 8], "available": true},
+  "query": "O'Reilly cookbook"
+}
+
+### Get one
+# @name get-book
+GET {{host}}/v1/books/42
+Accept: application/json
+Authorization: Bearer {{token}}
+
+### Reindex
+POST {{host}}/reindex?dryRun=true&batchSize=500
+Authorization: Bearer {{token}}
+`,
+            `host='https://api.example.com/library'
+token='abc.def.ghi'
+
+# Search books
+curl -X POST "\${host}/v1/books/search?page=0&size=20" \\
+  -H "Authorization: Bearer \${token}" \\
+  -H 'Content-Type: application/json' \\
+  --data-raw '{
+  "filter": {
+    "genreIds": [
+      3,
+      8
+    ],
+    "available": true
+  },
+  "query": "O'\\''Reilly cookbook"
+}'
+
+# Get one
+curl "\${host}/v1/books/42" \\
+  -H 'Accept: application/json' \\
+  -H "Authorization: Bearer \${token}"
+
+# Reindex
+curl -X POST "\${host}/reindex?dryRun=true&batchSize=500" \\
+  -H "Authorization: Bearer \${token}"`);
+
+        check(`@host = https://api.example.com/library
+@token = abc.def.ghi
+
+### Search books
+# @name search
+POST {{host}}/v1/books/search?page=0&size=20
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "filter": {"genreIds": [3, 8], "available": true},
+  "query": "O'Reilly cookbook"
+}
+
+### Get one
+# @name get-book
+GET {{host}}/v1/books/42
+Accept: application/json
+Authorization: Bearer {{token}}
+
+### Reindex
+POST {{host}}/reindex?dryRun=true&batchSize=500
+Authorization: Bearer {{token}}
+`,
+            `openapi: "3.0.3"
+info:
+  title: Converted requests
+  version: "1.0.0"
+servers:
+  - url: "https://api.example.com"
+paths:
+  /library/v1/books/search:
+    post:
+      summary: Search books
+      operationId: search
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+          example: 0
+        - name: size
+          in: query
+          schema:
+            type: integer
+          example: 20
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                filter:
+                  type: object
+                  properties:
+                    genreIds:
+                      type: array
+                      items:
+                        type: integer
+                    available:
+                      type: boolean
+                query:
+                  type: string
+            example:
+              filter:
+                genreIds:
+                  - 3
+                  - 8
+                available: true
+              query: "O'Reilly cookbook"
+      responses:
+        "200":
+          description: OK
+      security:
+        - bearerAuth: []
+  /library/v1/books/42:
+    get:
+      summary: Get one
+      operationId: get-book
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json: {}
+      security:
+        - bearerAuth: []
+  /library/reindex:
+    post:
+      summary: Reindex
+      operationId: reindex
+      parameters:
+        - name: dryRun
+          in: query
+          schema:
+            type: boolean
+          example: true
+        - name: batchSize
+          in: query
+          schema:
+            type: integer
+          example: 500
+      responses:
+        "200":
+          description: OK
+      security:
+        - bearerAuth: []
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+`);
+
+        check(`openapi: 3.0.1
+info:
+  title: Pet Store
+  version: "2.4"
+servers:
+  - url: https://petstore.example.com/api
+paths:
+  /v1/pets/{id}:
+    get:
+      summary: Get pet
+      operationId: getPet
+      tags: [pets]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: withOwner
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pet'
+    put:
+      summary: Update pet
+      description: |
+        Replaces the pet.
+        Photos are kept.
+      operationId: updatePet
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Pet'
+      responses:
+        "200":
+          description: OK
+  /v1/pets/{id}/photos:
+    post:
+      summary: Upload photo
+      operationId: uploadPhoto
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: X-Request-Id
+          in: header
+          schema:
+            type: string
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                kind:
+                  type: string
+                  enum: [AVATAR, GALLERY]
+      responses:
+        "201":
+          description: Created
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    Pet:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+          example: Biscuit
+        speciesId:
+          type: integer
+        vaccinated:
+          type: boolean
+        birthDate:
+          type: string
+          format: date
+        visits:
+          type: array
+          items:
+            $ref: '#/components/schemas/Visit'
+    Visit:
+      type: object
+      properties:
+        num:
+          type: integer
+        cost:
+          type: number
+`,
+            `# Pet Store 2.4
+### Get pet
+# tags: pets
+# @name getPet
+GET {{host}}/v1/pets/{{id}}?withOwner=false
+Accept: application/json
+
+### Update pet
+# Replaces the pet.
+# Photos are kept.
+# @name updatePet
+PUT {{host}}/v1/pets/{{id}}
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "id": 0,
+  "name": "Biscuit",
+  "speciesId": 0,
+  "vaccinated": false,
+  "birthDate": "2026-01-01",
+  "visits": [
+    {
+      "num": 0,
+      "cost": 0
+    }
+  ]
+}
+
+### Upload photo
+# @name uploadPhoto
+POST {{host}}/v1/pets/{{id}}/photos
+Content-Type: multipart/form-data
+X-Request-Id: {{X_Request_Id}}
+Authorization: Bearer {{token}}
+
+--WebAppBoundary
+Content-Disposition: form-data; name="file"
+
+
+--WebAppBoundary
+Content-Disposition: form-data; name="kind"
+
+AVATAR
+--WebAppBoundary--`);
+
+        check(`openapi: 3.0.1
+info:
+  title: Pet Store
+  version: "2.4"
+servers:
+  - url: https://petstore.example.com/api
+paths:
+  /v1/pets/{id}:
+    get:
+      summary: Get pet
+      operationId: getPet
+      tags: [pets]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: withOwner
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pet'
+    put:
+      summary: Update pet
+      description: |
+        Replaces the pet.
+        Photos are kept.
+      operationId: updatePet
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Pet'
+      responses:
+        "200":
+          description: OK
+  /v1/pets/{id}/photos:
+    post:
+      summary: Upload photo
+      operationId: uploadPhoto
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: X-Request-Id
+          in: header
+          schema:
+            type: string
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                kind:
+                  type: string
+                  enum: [AVATAR, GALLERY]
+      responses:
+        "201":
+          description: Created
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    Pet:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+          example: Biscuit
+        speciesId:
+          type: integer
+        vaccinated:
+          type: boolean
+        birthDate:
+          type: string
+          format: date
+        visits:
+          type: array
+          items:
+            $ref: '#/components/schemas/Visit'
+    Visit:
+      type: object
+      properties:
+        num:
+          type: integer
+        cost:
+          type: number
+`,
+            `# Get pet
+curl "\${host}/api/v1/pets/\${id}?withOwner=false" \\
+  -H 'Accept: application/json'
+
+# Update pet
+curl -X PUT "\${host}/api/v1/pets/\${id}" \\
+  -H 'Content-Type: application/json' \\
+  -H "Authorization: Bearer \${token}" \\
+  --data-raw '{
+  "id": 0,
+  "name": "Biscuit",
+  "speciesId": 0,
+  "vaccinated": false,
+  "birthDate": "2026-01-01",
+  "visits": [
+    {
+      "num": 0,
+      "cost": 0
+    }
+  ]
+}'
+
+# Upload photo
+curl -X POST "\${host}/api/v1/pets/\${id}/photos" \\
+  -H "X-Request-Id: \${X_Request_Id}" \\
+  -H "Authorization: Bearer \${token}" \\
+  -F 'file=' \\
+  -F 'kind=AVATAR'`);
+
+    });
+</script>
+</body>
+</html>
