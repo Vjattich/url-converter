@@ -18,7 +18,7 @@
 <script>
     QUnit.config.autostart = false;
 
-    var APP = 'curl-to-http.html';
+    var APP = 'index.html';
 
     fetch(APP)
         .then(function(r){ if(!r.ok) throw new Error(APP + ' -> HTTP ' + r.status); return r.text(); })
@@ -543,7 +543,7 @@ Authorization: Bearer {{token}}
   "name": "Biscuit",
   "speciesId": 0,
   "vaccinated": false,
-  "birthDate": "2026-01-01",
+  "birthDate": "string",
   "visits": [
     {
       "num": 0,
@@ -701,7 +701,7 @@ curl -X PUT "\${host}/api/v1/pets/\${id}" \\
   "name": "Biscuit",
   "speciesId": 0,
   "vaccinated": false,
-  "birthDate": "2026-01-01",
+  "birthDate": "string",
   "visits": [
     {
       "num": 0,
