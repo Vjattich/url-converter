@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>curl ⇄ OpenAPI ⇄ .http</title>
+    <title>curl ⇄ OpenAPI ⇄ .http ⇄ Spring</title>
     <style>
         :root{
             --orange: orange;
@@ -77,6 +77,11 @@
         #fmts.known span[data-f]{opacity:.4}
         #fmts.known span.on{opacity:1;text-decoration:underline;text-underline-offset:3px}
         .seg[hidden]{display:none}
+        .outwrap{position:relative;flex:1 1 auto;min-height:0;display:flex}
+        .pluses{position:absolute;inset:0;overflow:hidden;pointer-events:none}
+        .pluses button{position:absolute;pointer-events:auto;padding:0 6px;font-size:11px;line-height:15px;height:17px;
+            max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        .pluses button[aria-pressed=true]{background:var(--ink);color:var(--orange)}
         .seg button{user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;touch-action:manipulation}
         .seg button.hold{position:relative}
         .seg button.hold::after{content:"";position:absolute;right:2px;bottom:2px;border-left:4px solid transparent;border-bottom:4px solid currentColor;opacity:.55}
@@ -94,22 +99,23 @@
 <body>
 
 <header>
-    <h1>OpenAPI ⇄ curl ⇄ .http</h1>
+    <h1>OpenAPI ⇄ curl ⇄ .http ⇄ Spring</h1>
 </header>
 
 <div class="wrap">
     <section class="panel">
-        <h2><span id="fmts"><span data-f="openapi">OpenAPI</span>, <span data-f="curl">curl</span>, <span data-f="http">.http</span></span> <span id="cnt"></span>
+        <h2><span id="fmts"><span data-f="openapi">OpenAPI</span>, <span data-f="curl">curl</span>, <span data-f="http">.http</span>, <span data-f="spring">Spring</span></span> <span id="cnt"></span>
             <button id="clear" type="button" style="padding:2px 9px;font-size:11px">Clear</button>
         </h2>
         <label for="src"></label><textarea id="src" spellcheck="false" placeholder="Ctrl+V"></textarea>
     </section>
 
     <section class="panel">
-        <h2><span id="tfmts" role="radiogroup" aria-label="Output format"><button type="button" role="radio" data-t="openapi">OpenAPI</button>, <button type="button" role="radio" data-t="curl">curl</button>, <button type="button" role="radio" data-t="http">.http</button></span><select id="target" aria-label="Output format">
+        <h2><span id="tfmts" role="radiogroup" aria-label="Output format"><button type="button" role="radio" data-t="openapi">OpenAPI</button>, <button type="button" role="radio" data-t="curl">curl</button>, <button type="button" role="radio" data-t="http">.http</button>, <button type="button" role="radio" data-t="spring">Spring</button></span><select id="target" aria-label="Output format">
             <option value="http">.http</option>
             <option value="curl">curl</option>
             <option value="openapi">OpenAPI</option>
+            <option value="spring">Spring</option>
         </select> <span id="ocnt"></span>
             <span style="display:flex;gap:6px;align-items:center">
         <button id="save" style="padding:2px 9px;font-size:11px">Save</button>
@@ -117,7 +123,11 @@
       </span>
         </h2>
         <div class="seg" id="seg"><span class="lbl">out</span></div>
-        <label for="out"></label><textarea id="out" placeholder="Ctrl+C" spellcheck="false"></textarea>
+        <input type="file" id="fpick" multiple hidden>
+        <div class="outwrap">
+            <label for="out"></label><textarea id="out" placeholder="Ctrl+C" spellcheck="false"></textarea>
+            <div class="pluses" id="pluses"></div>
+        </div>
         <div class="err" id="err"></div>
     </section>
 </div>
@@ -782,9 +792,14 @@
                 const ex = k ? deref(doc, media.examples[k]) : null;
                 if (ex && typeof ex === "object" && "value" in ex) val = ex.value;
             }
+            if (val === undefined && media.schema && /multipart\/form-data/i.test(ct)) {
+                const mp = multipartFromSchema(doc, media.schema, o);
+                if (mp) return { body: mp, ctype: withBoundary(ct) };
+            }
             if (val === undefined && media.schema) val = sampleFromSchema(doc, media.schema, 0, new Set());
             if (val === undefined) return { body: null, ctype: ct };
-            return { body: serializeBody(val, ct), ctype: ct };
+            const built = /multipart/i.test(ct) && val && typeof val === "object" && !Array.isArray(val);
+            return { body: serializeBody(val, ct), ctype: built ? withBoundary(ct) : ct };
         }
 
         // swagger 2
@@ -819,6 +834,39 @@
             };
         }
         return { body: null, ctype: null };
+    }
+
+    function withBoundary(ct) {
+        return /boundary=/i.test(ct) ? ct : ct + "; boundary=" + BOUNDARY;
+    }
+
+    function multipartFromSchema(doc, schema, o) {
+        const sch = deref(doc, schema);
+        if (!sch || typeof sch !== "object") return null;
+        const props = {};
+        (Array.isArray(sch.allOf) ? sch.allOf : []).forEach(s => {
+            const d = deref(doc, s);
+            if (d && d.properties) Object.assign(props, d.properties);
+        });
+        Object.assign(props, sch.properties || {});
+        const keys = Object.keys(props);
+        if (!keys.length) return null;
+        const isBin = (s) => {
+            s = deref(doc, s) || {};
+            return s.format === "binary" || (s.type === "array" && isBin(s.items));
+        };
+        return keys.map(k => {
+            const head = ["--" + BOUNDARY];
+            if (isBin(props[k])) {
+                head.push('Content-Disposition: form-data; name="' + k + '"; filename="' + k + '"', "", "< ./" + k);
+                return head.join("\n");
+            }
+            head.push('Content-Disposition: form-data; name="' + k + '"');
+            const v = o.vars ? "{{" + varName(k) + "}}" : sampleFromSchema(doc, props[k], 0, new Set());
+            if (v && typeof v === "object") head.push("Content-Type: application/json", "", JSON.stringify(v, null, 2));
+            else head.push("", asText(v));
+            return head.join("\n");
+        }).join("\n") + "\n--" + BOUNDARY + "--";
     }
 
     function serializeBody(val, ct) {
@@ -1417,7 +1465,7 @@
         if(servers.length) doc.servers = servers;
         doc.paths = paths;
         if(Object.keys(schemes).length) doc.components = { securitySchemes: schemes };
-        return { text: count ? dumpYaml(doc) : "", count: count, warns: warns };
+        return { text: count ? dumpYaml(doc) : "", count: count, warns: warns, doc: doc };
     }
 
     /* ---------- YAML writer ---------- */
@@ -1481,6 +1529,1107 @@
     }
 
 
+    /* =================== Spring controller → OpenAPI =================== */
+
+    var SPRING_MAPPING = /@(?:[\w$]+\.)*(?:Request|Get|Post|Put|Delete|Patch)Mapping\b/;
+    var SPRING_VERBS = { GetMapping:"get", PostMapping:"post", PutMapping:"put", DeleteMapping:"delete", PatchMapping:"patch" };
+    var JAVA_MODS = { public:1, protected:1, private:1, static:1, final:1, abstract:1, synchronized:1, native:1,
+        transient:1, volatile:1, strictfp:1, default:1, sealed:1 };
+
+    function nameSet(s){ var o = {}; s.split(" ").forEach(function(n){ o[n] = 1; }); return o; }
+
+    var JAVA_SCALARS = {};
+    function jt(names, schema){ names.split(" ").forEach(function(n){ JAVA_SCALARS[n] = schema; }); }
+    jt("String CharSequence char Character", { type:"string" });
+    jt("int Integer short Short byte Byte AtomicInteger OptionalInt", { type:"integer", format:"int32" });
+    jt("long Long AtomicLong OptionalLong", { type:"integer", format:"int64" });
+    jt("BigInteger", { type:"integer" });
+    jt("float Float", { type:"number", format:"float" });
+    jt("double Double OptionalDouble", { type:"number", format:"double" });
+    jt("BigDecimal Number", { type:"number" });
+    jt("boolean Boolean AtomicBoolean", { type:"boolean" });
+    jt("UUID", { type:"string", format:"uuid" });
+    jt("LocalDate", { type:"string", format:"date" });
+    jt("LocalDateTime OffsetDateTime ZonedDateTime Instant Date Timestamp Calendar GregorianCalendar XMLGregorianCalendar",
+        { type:"string", format:"date-time" });
+    jt("LocalTime OffsetTime Duration Period ZoneId ZoneOffset TimeZone Locale Currency YearMonth Year MonthDay", { type:"string" });
+    jt("URI URL", { type:"string", format:"uri" });
+    jt("MultipartFile Part FilePart Resource InputStreamResource ByteArrayResource FileSystemResource UrlResource " +
+        "ClassPathResource StreamingResponseBody InputStream File", { type:"string", format:"binary" });
+    jt("JsonNode ObjectNode ArrayNode Object void Void", {});
+
+    var JAVA_COLLS = nameSet("List ArrayList LinkedList Collection Iterable Set HashSet LinkedHashSet TreeSet SortedSet " +
+        "NavigableSet Stream Queue Deque ArrayDeque Vector CopyOnWriteArrayList EnumSet Flux Observable Flowable");
+    var JAVA_MAPS = nameSet("Map HashMap LinkedHashMap TreeMap SortedMap NavigableMap ConcurrentHashMap ConcurrentMap " +
+        "MultiValueMap LinkedMultiValueMap EnumMap Properties");
+    var JAVA_WRAPS = nameSet("ResponseEntity HttpEntity RequestEntity Mono CompletableFuture CompletionStage Future " +
+        "ListenableFuture Callable DeferredResult WebAsyncTask Optional Supplier EntityModel Single Maybe");
+    var SPRING_SKIP_TYPES = nameSet("HttpServletRequest HttpServletResponse ServletRequest ServletResponse HttpSession " +
+        "WebRequest NativeWebRequest ServerWebExchange ServerHttpRequest ServerHttpResponse Principal Authentication " +
+        "Model ModelMap ModelAndView RedirectAttributes BindingResult Errors Locale TimeZone ZoneId UriComponentsBuilder " +
+        "SessionStatus HttpMethod HttpHeaders Reader Writer OutputStream InputStream SseEmitter");
+    var SPRING_IGNORE_ANNS = nameSet("RequestAttribute SessionAttribute AuthenticationPrincipal CurrentSecurityContext " +
+        "Value MatrixVariable");
+    var HTTP_STATUS = { OK:"200", CREATED:"201", ACCEPTED:"202", NON_AUTHORITATIVE_INFORMATION:"203", NO_CONTENT:"204",
+        RESET_CONTENT:"205", PARTIAL_CONTENT:"206", MULTI_STATUS:"207", IM_USED:"226", FOUND:"302", SEE_OTHER:"303" };
+
+    function isP(t, v){ return !!t && t.t === "p" && t.v === v; }
+    function clone(v){ return JSON.parse(JSON.stringify(v)); }
+
+    /* ---------- java tokenizer ---------- */
+
+    function unescJava(s){
+        var map = { n:"\n", t:"\t", r:"\r", b:"\b", f:"\f", s:" ", "0":"\0" };
+        return s.replace(/\\(?:u+([0-9a-fA-F]{4})|(.))/g, function(m, hex, c){
+            if(hex) return String.fromCharCode(parseInt(hex, 16));
+            return c in map ? map[c] : c;
+        });
+    }
+
+    var JAVA_ID = /[A-Za-z_$\u00C0-\uFFFF][\w$\u00C0-\uFFFF]*/y;
+    var JAVA_NUM = /\d[\w.]*/y;
+
+    function javaTokens(src){
+        var out = [], i = 0, n = src.length, m;
+        while(i < n){
+            var c = src[i];
+            if(/\s/.test(c)){ i++; continue; }
+            if(c === "/" && src[i + 1] === "/"){ var nl = src.indexOf("\n", i); i = nl < 0 ? n : nl; continue; }
+            if(c === "/" && src[i + 1] === "*"){
+                var e = src.indexOf("*/", i + 2);
+                if(e < 0) e = n;
+                if(src[i + 2] === "*" && e > i + 2) out.push({ t:"doc", v: src.slice(i + 3, e) });
+                i = e + 2; continue;
+            }
+            if(src.startsWith('"""', i)){
+                var e2 = src.indexOf('"""', i + 3);
+                if(e2 < 0) e2 = n;
+                out.push({ t:"str", v: unescJava(src.slice(i + 3, e2).replace(/^[ \t]*\r?\n/, "")) });
+                i = e2 + 3; continue;
+            }
+            if(c === '"' || c === "'"){
+                var j = i + 1;
+                while(j < n && src[j] !== c && src[j] !== "\n") j += src[j] === "\\" ? 2 : 1;
+                out.push({ t: c === '"' ? "str" : "chr", v: unescJava(src.slice(i + 1, j)) });
+                i = j + 1; continue;
+            }
+            JAVA_ID.lastIndex = i;
+            if((m = JAVA_ID.exec(src))){ out.push({ t:"id", v: m[0] }); i += m[0].length; continue; }
+            JAVA_NUM.lastIndex = i;
+            if((m = JAVA_NUM.exec(src))){ out.push({ t:"num", v: m[0] }); i += m[0].length; continue; }
+            out.push({ t:"p", v: c }); i++;
+        }
+        return out;
+    }
+
+    function matchClose(toks, i){
+        var d = 0;
+        for(var j = i; j < toks.length; j++){
+            var t = toks[j];
+            if(t.t !== "p") continue;
+            if("([{".indexOf(t.v) >= 0) d++;
+            else if(")]}".indexOf(t.v) >= 0 && --d === 0) return j;
+        }
+        return toks.length;
+    }
+
+    function skipAngles(toks, i){
+        var d = 0;
+        for(var j = i; j < toks.length; j++){
+            if(isP(toks[j], "<")) d++;
+            else if(isP(toks[j], ">") && --d === 0) return j + 1;
+        }
+        return toks.length;
+    }
+
+    function splitTop(toks, sep, angles){
+        var parts = [[]], d = 0, a = 0;
+        toks.forEach(function(t){
+            if(t.t === "p"){
+                if("([{".indexOf(t.v) >= 0) d++;
+                else if(")]}".indexOf(t.v) >= 0) d--;
+                else if(angles && t.v === "<") a++;
+                else if(angles && t.v === ">") a--;
+                else if(t.v === sep && !d && !a){ parts.push([]); return; }
+            }
+            parts[parts.length - 1].push(t);
+        });
+        return parts.filter(function(p){ return p.length; });
+    }
+
+    // @Foo(...) becomes one token holding its (already grouped) arguments
+    function groupAnnotations(toks){
+        var out = [];
+        for(var i = 0; i < toks.length; i++){
+            var t = toks[i];
+            if(!(isP(t, "@") && toks[i + 1] && toks[i + 1].t === "id")){ out.push(t); continue; }
+            if(toks[i + 1].v === "interface"){ out.push(toks[i + 1]); i++; continue; }
+            var name = toks[++i].v;
+            while(isP(toks[i + 1], ".") && toks[i + 2] && toks[i + 2].t === "id"){ name = toks[i + 2].v; i += 2; }
+            var ann = { t:"ann", name: name, args: null };
+            if(isP(toks[i + 1], "(")){
+                var close = matchClose(toks, i + 1);
+                ann.args = groupAnnotations(toks.slice(i + 2, close));
+                i = close;
+            }
+            out.push(ann);
+        }
+        return out;
+    }
+
+    /* ---------- declarations ---------- */
+
+    function parseType(toks){
+        var i = 0;
+        function one(){
+            var start = i;
+            while(toks[i] && toks[i].t === "ann") i++;
+            if(isP(toks[i], "?")){
+                i++;
+                if(toks[i] && (toks[i].v === "extends" || toks[i].v === "super")){ i++; return one(); }
+                return { name:"Object", args:[], dims:0 };
+            }
+            var name = toks[i] && toks[i].t === "id" ? toks[i++].v : "Object";
+            var args = [];
+            for(;;){
+                if(isP(toks[i], "<")){
+                    i++; args = [];
+                    while(i < toks.length && !isP(toks[i], ">")){
+                        if(isP(toks[i], ",")){ i++; continue; }
+                        var before = i;
+                        args.push(one());
+                        if(i === before) i++;
+                    }
+                    i++;
+                }
+                if(isP(toks[i], ".") && toks[i + 1] && toks[i + 1].t === "id"){ name = toks[i + 1].v; args = []; i += 2; continue; }
+                break;
+            }
+            var dims = 0;
+            for(;;){
+                if(isP(toks[i], "[")){ dims++; i += 2; continue; }
+                if(isP(toks[i], ".") && isP(toks[i + 1], ".") && isP(toks[i + 2], ".")){ dims++; i += 3; continue; }
+                break;
+            }
+            if(i === start) i++;
+            return { name: name, args: args, dims: dims };
+        }
+        return one();
+    }
+
+    var TYPE_TOK = /^[.<>,?\[\]&]$/;
+    function typeToksOk(toks){
+        return toks.length && toks.every(function(t){ return t.t === "id" || t.t === "ann" || (t.t === "p" && TYPE_TOK.test(t.v)); });
+    }
+
+    function declOf(toks){
+        var anns = [], rest = [];
+        toks.forEach(function(t){
+            if(t.t === "ann") anns.push(t);
+            else if(t.t === "doc" || (t.t === "id" && JAVA_MODS[t.v])) return;
+            else rest.push(t);
+        });
+        var last = rest[rest.length - 1];
+        if(rest.length < 2 || last.t !== "id") return null;
+        var typeToks = rest.slice(0, -1);
+        if(!typeToksOk(typeToks)) return null;
+        return { name: last.v, type: parseType(typeToks), anns: anns };
+    }
+
+    function methodOf(stmt, paramToks){
+        var rest = stmt.filter(function(t){ return !(t.t === "id" && JAVA_MODS[t.v]) && t.t !== "doc" && t.t !== "ann"; });
+        if(isP(rest[0], "<")) rest = rest.slice(skipAngles(rest, 0));
+        var name = rest[rest.length - 1];
+        if(rest.length < 2 || name.t !== "id") return null;     // constructors, calls
+        var typeToks = rest.slice(0, -1);
+        if(!typeToksOk(typeToks)) return null;
+        return { name: name.v, ret: parseType(typeToks), params: splitTop(paramToks, ",", true).map(declOf).filter(Boolean) };
+    }
+
+    function enumConstants(toks, i, def){
+        var expect = true;
+        while(i < toks.length){
+            var t = toks[i];
+            if(isP(t, ";")) return i + 1;
+            if(isP(t, "}")) return i;
+            if(isP(t, "(") || isP(t, "{")){ i = matchClose(toks, i) + 1; continue; }
+            if(isP(t, ",")) expect = true;
+            else if(t.t === "id" && expect){ def.enumValues.push(t.v); expect = false; }
+            i++;
+        }
+        return i;
+    }
+
+    // classes with their fields and methods; a bare method pasted without a class lands in the root
+    function walkJava(toks){
+        var root = { name: null, kind: "root", anns: [], fields: [], methods: [], enumValues: [] };
+        var classes = [root], stack = [root];
+        var stmt = [], anns = [], doc = null, i = 0, n = toks.length;
+        function reset(){ stmt = []; anns = []; doc = null; }
+        function addField(cls, init){
+            if(!stmt.length || (cls.kind === "root" && !init)) return;
+            var d = declOf(stmt);
+            if(!d) return;
+            d.anns = anns.concat(d.anns);
+            d.isStatic = cls.kind === "interface" || stmt.some(function(t){ return t.t === "id" && t.v === "static"; });
+            d.init = init;
+            d.doc = doc;
+            cls.fields.push(d);
+        }
+        while(i < n){
+            var t = toks[i], cls = stack[stack.length - 1];
+            if(t.t === "doc"){ doc = t.v; i++; continue; }
+            if(t.t === "ann"){ anns.push(t); i++; continue; }
+            if(t.t === "id" && /^(class|interface|enum|record)$/.test(t.v) && toks[i + 1] && toks[i + 1].t === "id"
+                && !isP(stmt[stmt.length - 1], ".")){
+                var def = { name: toks[i + 1].v, kind: t.v, anns: anns, doc: doc, ext: null, fields: [], methods: [], enumValues: [] };
+                i += 2;
+                if(isP(toks[i], "<")) i = skipAngles(toks, i);
+                if(def.kind === "record" && isP(toks[i], "(")){
+                    var rc = matchClose(toks, i);
+                    splitTop(toks.slice(i + 1, rc), ",", true).forEach(function(p){ var f = declOf(p); if(f) def.fields.push(f); });
+                    i = rc + 1;
+                }
+                while(i < n && !isP(toks[i], "{") && !isP(toks[i], ";")){
+                    if(toks[i].t === "id" && toks[i].v === "extends" && def.kind === "class"){
+                        var k = i + 1;
+                        while(toks[k] && toks[k].t === "id"){ def.ext = toks[k].v; if(isP(toks[k + 1], ".")) k += 2; else break; }
+                        i = k + 1; continue;
+                    }
+                    i++;
+                }
+                classes.push(def);
+                if(isP(toks[i], "{")){
+                    i++;
+                    stack.push(def);
+                    if(def.kind === "enum") i = enumConstants(toks, i, def);
+                } else i++;
+                reset(); continue;
+            }
+            if(t.t === "p"){
+                if(t.v === "{"){ i = matchClose(toks, i) + 1; reset(); continue; }      // initializer block
+                if(t.v === "}"){ if(stack.length > 1) stack.pop(); i++; reset(); continue; }
+                if(t.v === ";"){ addField(cls, null); i++; reset(); continue; }
+                if(t.v === "="){
+                    var j = i + 1;
+                    while(j < n && !isP(toks[j], ";") && !isP(toks[j], "}")){
+                        if(toks[j].t === "p" && "([{".indexOf(toks[j].v) >= 0) j = matchClose(toks, j);
+                        j++;
+                    }
+                    addField(cls, toks.slice(i + 1, j));
+                    i = isP(toks[j], ";") ? j + 1 : j; reset(); continue;
+                }
+                if(t.v === "("){
+                    var pc = matchClose(toks, i);
+                    var m = methodOf(stmt, toks.slice(i + 1, pc));
+                    i = pc + 1;
+                    // throws clause; a signature pasted without a body stops at the next declaration
+                    while(i < n && !isP(toks[i], "{") && !isP(toks[i], ";") && !isP(toks[i], "}")
+                    && toks[i].t !== "ann" && toks[i].t !== "doc" && !(toks[i].t === "id" && JAVA_MODS[toks[i].v])){
+                        if(isP(toks[i], "(")) i = matchClose(toks, i);
+                        i++;
+                    }
+                    if(isP(toks[i], "{")) i = matchClose(toks, i) + 1;
+                    else if(isP(toks[i], ";")) i++;
+                    if(m){ m.anns = anns; m.doc = doc; cls.methods.push(m); }
+                    reset(); continue;
+                }
+            }
+            stmt.push(t); i++;
+        }
+        return classes;
+    }
+
+    /* ---------- annotation values ---------- */
+
+    function isIdChain(p){
+        if(!p.length || p.length % 2 === 0) return false;
+        return p.every(function(t, k){ return k % 2 ? isP(t, ".") : t.t === "id"; });
+    }
+
+    // → { s } string, { sym } unresolved name, { lit } boolean/number, { ann } nested annotation
+    function evalExpr(toks, ctx, depth){
+        depth = depth || 0;
+        while(toks.length >= 2 && isP(toks[0], "(") && matchClose(toks, 0) === toks.length - 1) toks = toks.slice(1, -1);
+        var pieces = splitTop(toks, "+");
+        if(pieces.length > 1){
+            var s = "";
+            pieces.forEach(function(p){
+                var r = evalExpr(p, ctx, depth);
+                if(r.s != null) s += r.s;
+                else if(r.sym){ s += "{" + r.sym + "}"; ctx.unresolved[r.sym] = 1; }
+                else if(r.lit !== undefined) s += String(r.lit);
+            });
+            return { s: s };
+        }
+        var p = pieces[0] || [];
+        if(p.length === 1){
+            var t = p[0];
+            if(t.t === "str" || t.t === "chr") return { s: t.v };
+            if(t.t === "num") return { lit: t.v };
+            if(t.t === "ann") return { ann: t };
+            if(t.t === "id" && (t.v === "true" || t.v === "false")) return { lit: t.v === "true" };
+        }
+        if(isIdChain(p)){
+            var last = p[p.length - 1].v;
+            var full = p.length >= 3 ? p[p.length - 3].v + "." + last : last;
+            var f = ctx.consts[full] || ctx.consts[last];
+            if(f && !f.busy && depth < 10){
+                f.busy = true;
+                var r = evalExpr(f.init, ctx, depth + 1);
+                f.busy = false;
+                if(r.s != null) return { s: r.s };
+            }
+            return { sym: last };
+        }
+        return {};
+    }
+
+    function annAttrs(ann){
+        if(ann._attrs) return ann._attrs;
+        var attrs = {};
+        splitTop(ann.args || [], ",").forEach(function(part){
+            if(part.length > 2 && part[0].t === "id" && isP(part[1], "=")) attrs[part[0].v] = part.slice(2);
+            else attrs.value = part;
+        });
+        return (ann._attrs = attrs);
+    }
+
+    function annItems(ann, keys, ctx){
+        if(!ann) return [];
+        var attrs = annAttrs(ann);
+        for(var k = 0; k < keys.length; k++){
+            var v = attrs[keys[k]];
+            if(!v) continue;
+            if(isP(v[0], "{") && matchClose(v, 0) === v.length - 1){
+                return splitTop(v.slice(1, -1), ",").map(function(x){ return evalExpr(x, ctx); });
+            }
+            return [evalExpr(v, ctx)];
+        }
+        return [];
+    }
+
+    function annStr(ann, keys, ctx){
+        var it = annItems(ann, keys, ctx)[0];
+        if(!it) return null;
+        if(it.s != null) return it.s;
+        if(it.lit !== undefined) return String(it.lit);
+        return it.sym || null;
+    }
+
+    function annBool(ann, key, ctx, dflt){
+        var it = annItems(ann, [key], ctx)[0];
+        return it && typeof it.lit === "boolean" ? it.lit : dflt;
+    }
+
+    function findAnn(anns, name){
+        for(var k = 0; anns && k < anns.length; k++) if(anns[k].name === name) return anns[k];
+        return null;
+    }
+
+    function mediaOf(it){
+        if(it.s != null) return it.s;
+        if(!it.sym) return null;
+        var k = it.sym.replace(/_VALUE$/, "");
+        var special = { ALL:"*/*", APPLICATION_FORM_URLENCODED:"application/x-www-form-urlencoded", APPLICATION_JSON_UTF8:"application/json;charset=UTF-8", APPLICATION_NDJSON:"application/x-ndjson",
+            APPLICATION_PROBLEM_JSON:"application/problem+json", APPLICATION_PROBLEM_XML:"application/problem+xml",
+            APPLICATION_STREAM_JSON:"application/stream+json", APPLICATION_ATOM_XML:"application/atom+xml",
+            APPLICATION_RSS_XML:"application/rss+xml", APPLICATION_XHTML_XML:"application/xhtml+xml" };
+        if(special[k]) return special[k];
+        var parts = k.toLowerCase().split("_");
+        return parts.length > 1 ? parts[0] + "/" + parts.slice(1).join("-") : null;
+    }
+
+    function mediaList(ann, key, ctx){
+        return annItems(ann, [key], ctx).map(mediaOf).filter(Boolean);
+    }
+
+    function pathList(ann, ctx){
+        return annItems(ann, ["value", "path"], ctx).map(function(it){
+            if(it.s != null) return it.s;
+            if(it.sym){ ctx.unresolved[it.sym] = 1; return "{" + it.sym + "}"; }
+            return "";
+        });
+    }
+
+    function springPath(a, b){
+        var ph = function(s){
+            return String(s).replace(/\$\{([^}:]+)(?::([^}]*))?\}/g, function(m, k, d){
+                return d != null ? d : "{" + k.trim().replace(/\W+/g, "_") + "}";
+            });
+        };
+        var s = "/" + ph(a) + "/" + ph(b), out = "", i = 0;
+        while(i < s.length){
+            if(s[i] !== "{"){ out += s[i++]; continue; }
+            var d = 0, j = i;
+            for(; j < s.length; j++){ if(s[j] === "{") d++; else if(s[j] === "}" && --d === 0) break; }
+            out += "{" + s.slice(i + 1, j).split(":")[0].trim() + "}";    // {id:\d+} → {id}
+            i = j + 1;
+        }
+        out = out.replace(/\/{2,}/g, "/");
+        if(out.length > 1) out = out.replace(/\/$/, "");
+        return out || "/";
+    }
+
+    function headerize(sym){
+        return sym.toLowerCase().split("_").map(function(w){ return w ? w[0].toUpperCase() + w.slice(1) : w; }).join("-");
+    }
+
+    function docText(raw){
+        if(!raw) return {};
+        var body = [];
+        raw.split("\n").some(function(l){
+            l = l.replace(/^\s*\*?\s?/, "").replace(/\s+$/, "");
+            if(/^@\w+/.test(l.trim())) return true;
+            body.push(l);
+        });
+        var text = body.join("\n")
+            .replace(/\{@(?:code|link|linkplain|literal|value)\s+([^}]*)\}/g, "$1")
+            .replace(/<\/?(?:p|br|b|i|em|strong|code|pre|ul|ol|li)\s*\/?>/gi, "")
+            .trim();
+        if(!text) return {};
+        var ls = text.split("\n");
+        return { summary: ls[0].trim(), description: ls.slice(1).join("\n").trim() || null };
+    }
+
+    /* ---------- types → schemas ---------- */
+
+    var OBJ_TYPE = { name:"Object", args:[], dims:0 };
+
+    function unwrapOpt(t){
+        if(t.name === "Optional" && !t.dims) return { type: t.args[0] || OBJ_TYPE, optional: true };
+        return { type: t, optional: /^Optional(Int|Long|Double)$/.test(t.name) };
+    }
+
+    function isFileSchema(s){
+        return !!s && (s.format === "binary" || (s.type === "array" && isFileSchema(s.items)));
+    }
+
+    function isScalarSchema(s){
+        if(!s || s.$ref || isFileSchema(s)) return false;
+        if(s.type === "array") return isScalarSchema(s.items);
+        return ["string", "integer", "number", "boolean"].indexOf(s.type) >= 0;
+    }
+
+    function typedFor(s, v){
+        var t = s && s.type;
+        if(t === "integer" && /^-?\d+$/.test(v)) return Number.isSafeInteger(+v) ? +v : v;
+        if(t === "number" && /^-?\d+(\.\d+)?$/.test(v)) return parseFloat(v);
+        if(t === "boolean" && /^(true|false)$/.test(v)) return v === "true";
+        return v;
+    }
+
+    // description / example from swagger annotations, where a $ref doesn't swallow them
+    function decorate(s, anns, ctx){
+        if(!s || s.$ref) return s;
+        [["Schema", "description"], ["Parameter", "description"], ["ApiModelProperty", "value"], ["ApiParam", "value"]].forEach(function(pair){
+            var a = findAnn(anns, pair[0]);
+            if(!a) return;
+            var d = annStr(a, [pair[1]], ctx), ex = annStr(a, ["example"], ctx);
+            if(d && !s.description) s.description = d;
+            if(ex != null && !("example" in s)) s.example = typedFor(s, ex);
+        });
+        return s;
+    }
+
+    function schemaOf(t, ctx){
+        if(!t) return {};
+        if(t.dims){
+            if(t.dims === 1 && /^(byte|Byte)$/.test(t.name)) return { type:"string", format:"binary" };
+            return { type:"array", items: schemaOf({ name: t.name, args: t.args, dims: t.dims - 1 }, ctx) };
+        }
+        var n = t.name, a = t.args || [];
+        if(JAVA_WRAPS[n]) return a[0] ? schemaOf(a[0], ctx) : {};
+        if(JAVA_COLLS[n]){
+            var arr = { type:"array", items: a[0] ? schemaOf(a[0], ctx) : {} };
+            if(/Set$/.test(n)) arr.uniqueItems = true;
+            return arr;
+        }
+        if(JAVA_MAPS[n]) return { type:"object", additionalProperties: a[1] ? schemaOf(a[1], ctx) : {} };
+        if(n === "Page" || n === "Slice"){
+            return { type:"object", properties: {
+                    content: { type:"array", items: a[0] ? schemaOf(a[0], ctx) : {} },
+                    totalElements: { type:"integer", format:"int64" }, totalPages: { type:"integer", format:"int32" },
+                    number: { type:"integer", format:"int32" }, size: { type:"integer", format:"int32" } } };
+        }
+        if(JAVA_SCALARS[n]) return clone(JAVA_SCALARS[n]);
+        var def = ctx.classes[n];
+        if(def && def.kind === "enum") return { type:"string", enum: def.enumValues.slice() };
+        if(/^[A-Z]\d?$/.test(n)) return {};                                  // a type variable
+        if(!ctx.schemas[n]){
+            var sch = ctx.schemas[n] = { type:"object" };
+            if(def && def.kind !== "interface"){
+                var props = {}, req = [];
+                beanFields(def, ctx).forEach(function(f){ props[f.name] = f.schema; if(f.required) req.push(f.name); });
+                if(Object.keys(props).length) sch.properties = props;
+                if(req.length) sch.required = req;
+                var d = docText(def.doc);
+                if(d.summary) sch.description = [d.summary, d.description].filter(Boolean).join("\n");
+            } else ctx.unknown[n] = 1;
+        }
+        return { $ref: "#/components/schemas/" + n };
+    }
+
+    function beanFields(def, ctx, seen){
+        seen = seen || {};
+        if(!def || seen[def.name]) return [];
+        seen[def.name] = 1;
+        var out = def.ext && ctx.classes[def.ext] ? beanFields(ctx.classes[def.ext], ctx, seen) : [];
+        def.fields.forEach(function(f){
+            if(f.isStatic || findAnn(f.anns, "JsonIgnore") || findAnn(f.anns, "Transient")) return;
+            var jp = findAnn(f.anns, "JsonProperty"), sa = findAnn(f.anns, "Schema");
+            var name = (jp && annStr(jp, ["value"], ctx)) || f.name;
+            var req = ["NotNull", "NotBlank", "NotEmpty"].some(function(a){ return findAnn(f.anns, a); })
+                || (jp && annBool(jp, "required", ctx, false))
+                || (sa && (annBool(sa, "required", ctx, false) || annStr(sa, ["requiredMode"], ctx) === "REQUIRED"));
+            var sch = decorate(schemaOf(f.type, ctx), f.anns, ctx);
+            var d = docText(f.doc);
+            if(d.summary && !sch.$ref && !sch.description) sch.description = d.summary;
+            out = out.filter(function(x){ return x.name !== name; });
+            out.push({ name: name, schema: sch, required: !!req });
+        });
+        return out;
+    }
+
+    function returnSchema(t, ctx){
+        while(!t.dims && JAVA_WRAPS[t.name]) t = t.args[0] || OBJ_TYPE;
+        if(!t.dims && (t.name === "void" || t.name === "Void")) return null;
+        return schemaOf(t, ctx);
+    }
+
+    /* ---------- one handler method → operation ---------- */
+
+    function springOperation(m, cls, consumes, produces, ctx){
+        var op = {}, params = [], parts = {}, partReq = [], body = null, hasPart = false;
+        var formMode = consumes.some(function(c){ return /x-www-form-urlencoded/i.test(c); });
+
+        var sw = findAnn(m.anns, "Operation"), sw2 = findAnn(m.anns, "ApiOperation"), jd = docText(m.doc);
+        var summary = annStr(sw, ["summary"], ctx) || annStr(sw2, ["value"], ctx) || jd.summary;
+        var description = annStr(sw, ["description"], ctx) || annStr(sw2, ["notes"], ctx) || (summary === jd.summary ? jd.description : null);
+        if(summary) op.summary = summary;
+        if(description) op.description = description;
+        op.operationId = m.name;
+        var tag = annStr(findAnn(m.anns, "Tag") || findAnn(cls.anns, "Tag"), ["name"], ctx)
+            || annStr(findAnn(cls.anns, "Api"), ["tags", "value"], ctx);
+        if(tag) op.tags = [tag];
+        if(findAnn(m.anns, "Deprecated") || findAnn(cls.anns, "Deprecated")) op.deprecated = true;
+
+        function addParam(name, where, sch, required, anns){
+            var p = { name: name, in: where };
+            if(required || where === "path") p.required = true;
+            p.schema = decorate(sch, anns || [], ctx);
+            params.push(p);
+        }
+        function addPart(name, sch, required){
+            parts[name] = sch;
+            if(required && partReq.indexOf(name) < 0) partReq.push(name);
+        }
+        function field(name, sch, required, anns){
+            if(formMode) addPart(name, decorate(sch, anns || [], ctx), required);
+            else addParam(name, "query", sch, required, anns);
+        }
+        function nameOf(ann, fallback){
+            return annStr(ann, ["value", "name"], ctx) || fallback;
+        }
+        function requiredOf(ann, optional){
+            if(optional || annStr(ann, ["defaultValue"], ctx) != null) return false;
+            return annBool(ann, "required", ctx, true);
+        }
+        function withDefault(sch, ann){
+            var dv = annStr(ann, ["defaultValue"], ctx);
+            if(dv != null && !sch.$ref) sch.default = typedFor(sch, dv);
+            return sch;
+        }
+
+        m.params.forEach(function(p){
+            var a = p.anns, un = unwrapOpt(p.type), type = un.type, ann, sch;
+            if(a.some(function(x){ return SPRING_IGNORE_ANNS[x.name]; })) return;
+            if((ann = findAnn(a, "RequestBody"))){
+                body = { schema: decorate(schemaOf(type, ctx), a, ctx), required: annBool(ann, "required", ctx, true) && !un.optional };
+                return;
+            }
+            if((ann = findAnn(a, "PathVariable"))){
+                if(!JAVA_MAPS[type.name]) addParam(nameOf(ann, p.name), "path", schemaOf(type, ctx), true, a);
+                return;
+            }
+            if((ann = findAnn(a, "RequestHeader")) || (ann = findAnn(a, "CookieValue"))){
+                if(JAVA_MAPS[type.name] || type.name === "HttpHeaders") return;
+                var it = annItems(ann, ["value", "name"], ctx)[0];
+                var hn = it ? (it.s != null ? it.s : (ann.name === "RequestHeader" ? headerize(it.sym) : it.sym)) : p.name;
+                addParam(hn, ann.name === "RequestHeader" ? "header" : "cookie",
+                    withDefault(schemaOf(type, ctx), ann), requiredOf(ann, un.optional), a);
+                return;
+            }
+            if((ann = findAnn(a, "RequestPart"))){
+                hasPart = true;
+                addPart(nameOf(ann, p.name), decorate(schemaOf(type, ctx), a, ctx), requiredOf(ann, un.optional));
+                return;
+            }
+            if((ann = findAnn(a, "RequestParam"))){
+                if(JAVA_MAPS[type.name] && !annStr(ann, ["value", "name"], ctx)) return;
+                sch = schemaOf(type, ctx);
+                if(isFileSchema(sch)){ hasPart = true; addPart(nameOf(ann, p.name), sch, requiredOf(ann, un.optional)); return; }
+                field(nameOf(ann, p.name), withDefault(sch, ann), requiredOf(ann, un.optional), a);
+                return;
+            }
+            // no annotation (or @ModelAttribute): Spring binds simple types and bean fields from request params
+            var simple = type.dims ? "" : type.name;
+            if(SPRING_SKIP_TYPES[simple]) return;
+            if(simple === "Pageable"){
+                field("page", { type:"integer", format:"int32" }, false);
+                field("size", { type:"integer", format:"int32" }, false);
+                field("sort", { type:"string" }, false);
+                return;
+            }
+            if(simple === "Sort"){ field("sort", { type:"string" }, false); return; }
+            var def = ctx.classes[simple];
+            if(def && def.kind !== "enum" && def.kind !== "interface"){
+                beanFields(def, ctx).forEach(function(f){ field(f.name, f.schema, f.required); });
+                return;
+            }
+            sch = schemaOf(type, ctx);
+            if(isFileSchema(sch)){ hasPart = true; addPart(p.name, sch, false); return; }
+            if(isScalarSchema(sch)){ field(p.name, sch, false, a); return; }
+            if(sch.$ref) ctx.beanUnknown[simple] = 1;
+        });
+
+        if(params.length) op.parameters = params;
+        var content = {};
+        if(body){
+            content[consumes[0] || (isFileSchema(body.schema) ? "application/octet-stream" : "application/json")] = { schema: body.schema };
+            op.requestBody = { content: content };
+            if(body.required) op.requestBody.required = true;
+            if(Object.keys(parts).length) ctx.warns.push(m.name + " has a @RequestBody and form parts, kept the body");
+        } else if(Object.keys(parts).length){
+            var fct = formMode && !hasPart
+                ? consumes.filter(function(c){ return /x-www-form-urlencoded/i.test(c); })[0]
+                : (consumes.filter(function(c){ return /multipart/i.test(c); })[0] || "multipart/form-data");
+            var fs = { type:"object", properties: parts };
+            if(partReq.length) fs.required = partReq;
+            content[fct] = { schema: fs };
+            op.requestBody = { content: content };
+            if(partReq.length) op.requestBody.required = true;
+        }
+
+        var rs = findAnn(m.anns, "ResponseStatus"), code = "200";
+        if(rs){
+            var ci = annItems(rs, ["code", "value"], ctx)[0];
+            if(ci && ci.sym && HTTP_STATUS[ci.sym]) code = HTTP_STATUS[ci.sym];
+        }
+        var r = returnSchema(m.ret, ctx), resp = { description: code === "204" ? "No Content" : "OK" };
+        if(r && code !== "204"){
+            var rct = produces[0] || (isFileSchema(r) ? "application/octet-stream"
+                : (r.type === "string" && !r.format && !r.enum ? "text/plain" : "application/json"));
+            resp.content = {};
+            resp.content[rct] = Object.keys(r).length ? { schema: r } : {};
+        }
+        op.responses = {};
+        op.responses[code] = resp;
+        return op;
+    }
+
+    function refsOf(node, ctx, acc){
+        JSON.stringify(node || {}).replace(/#\/components\/schemas\/([^"]+)/g, function(m, name){
+            if(!acc[name]){ acc[name] = 1; refsOf(ctx.schemas[name], ctx, acc); }
+            return m;
+        });
+        return acc;
+    }
+
+    /* springToOpenApi(java source) -> { doc, count, titled, warns, unknown, bodyUnknown } | { err } */
+    function springToOpenApi(src){
+        var classes = walkJava(groupAnnotations(javaTokens(src)));
+        var ctx = { consts: {}, classes: {}, schemas: {}, unknown: {}, beanUnknown: {}, unresolved: {}, warns: [] };
+        classes.forEach(function(c){
+            if(c.name && !ctx.classes[c.name]) ctx.classes[c.name] = c;
+            c.fields.forEach(function(f){
+                if(!f.init) return;
+                var entry = { init: f.init };
+                if(!ctx.consts[f.name]) ctx.consts[f.name] = entry;
+                if(c.name) ctx.consts[c.name + "." + f.name] = entry;
+            });
+        });
+
+        var paths = {}, count = 0, opIds = {}, titles = [], bodyRefs = {};
+        classes.forEach(function(c){
+            var cm = findAnn(c.anns, "RequestMapping"), feign = findAnn(c.anns, "FeignClient");
+            var prefixes = cm ? pathList(cm, ctx) : [];
+            if(!prefixes.length) prefixes = [""];
+            var fp = feign ? annStr(feign, ["path"], ctx) : null;
+            if(fp) prefixes = prefixes.map(function(p){ return fp + "/" + p; });
+            var clsConsumes = mediaList(cm, "consumes", ctx), clsProduces = mediaList(cm, "produces", ctx);
+            var used = false;
+
+            c.methods.forEach(function(m){
+                var mapping = m.anns.filter(function(a){ return a.name === "RequestMapping" || SPRING_VERBS[a.name]; })[0];
+                if(!mapping) return;
+                var verbs = SPRING_VERBS[mapping.name] ? [SPRING_VERBS[mapping.name]]
+                    : annItems(mapping, ["method"], ctx).map(function(it){ return String(it.sym || it.s || "").toLowerCase(); })
+                        .filter(function(v){ return HTTP_METHODS.indexOf(v) >= 0; });
+                var mpaths = pathList(mapping, ctx);
+                if(!mpaths.length) mpaths = [""];
+                var consumes = mediaList(mapping, "consumes", ctx), produces = mediaList(mapping, "produces", ctx);
+                var op = springOperation(m, c, consumes.length ? consumes : clsConsumes, produces.length ? produces : clsProduces, ctx);
+                if(!verbs.length){
+                    verbs = [op.requestBody ? "post" : "get"];
+                    ctx.warns.push(m.name + " has no method, used " + verbs[0].toUpperCase());
+                }
+                if(op.requestBody) refsOf(op.requestBody, ctx, bodyRefs);
+                (op.parameters || []).forEach(function(p){ refsOf(p.schema, ctx, bodyRefs); });
+
+                prefixes.forEach(function(pre){
+                    mpaths.forEach(function(mp){
+                        var path = springPath(pre, mp);
+                        var inPath = [];
+                        path.replace(/\{([^{}]+)\}/g, function(x, k){ inPath.push(k); return x; });
+                        verbs.forEach(function(verb){
+                            paths[path] = paths[path] || {};
+                            if(paths[path][verb]){ ctx.warns.push("duplicate " + verb.toUpperCase() + " " + path + " skipped"); return; }
+                            var o = clone(op);
+                            var ps = (o.parameters || []).filter(function(p){ return p.in !== "path" || inPath.indexOf(p.name) >= 0; });
+                            inPath.forEach(function(k){
+                                if(!ps.some(function(p){ return p.in === "path" && p.name === k; })){
+                                    ps.push({ name: k, in: "path", required: true, schema: { type:"string" } });
+                                }
+                            });
+                            o.parameters = ps.length ? ps : undefined;
+                            var id = o.operationId, k2 = 2;
+                            if(opIds[id]) id = o.operationId + "-" + verb;
+                            while(opIds[id]) id = o.operationId + "-" + k2++;
+                            opIds[id] = 1;
+                            o.operationId = id;
+                            var ordered = {};
+                            ["summary", "description", "operationId", "tags", "deprecated", "parameters", "requestBody", "responses"]
+                                .forEach(function(k){ if(o[k] !== undefined) ordered[k] = o[k]; });
+                            paths[path][verb] = ordered;
+                            count++;
+                            used = true;
+                        });
+                    });
+                });
+            });
+            if(used && c.name) titles.push(c.name);
+        });
+
+        if(!count) return { err: "No @…Mapping methods found in the Java code." };
+        var unresolved = Object.keys(ctx.unresolved);
+        if(unresolved.length) ctx.warns.push("unknown constant " + unresolved.join(", ") + ", left as a path variable");
+        var beans = Object.keys(ctx.beanUnknown);
+        if(beans.length) ctx.warns.push("can't see the fields of " + beans.join(", ") + " for request params, paste the class too");
+
+        var doc = { openapi: "3.0.3", info: { title: titles.length ? titles.join(", ") : "Spring endpoints", version: "1.0.0" }, paths: paths };
+        if(Object.keys(ctx.schemas).length) doc.components = { schemas: ctx.schemas };
+        var unknown = Object.keys(ctx.unknown);
+        return {
+            doc: doc, count: count, titled: titles.length > 0, warns: ctx.warns,
+            unknown: unknown, bodyUnknown: unknown.filter(function(n){ return bodyRefs[n]; })
+        };
+    }
+
+    function noFieldsWarn(names){
+        if(!names.length) return [];
+        return ["no fields for " + names.join(", ") + ", paste " + (names.length > 1 ? "their classes" : "its class") + " too"];
+    }
+
+
+    /* =================== OpenAPI → Spring controller =================== */
+
+    var JAVA_KEYWORDS = nameSet("abstract assert boolean break byte case catch char class const continue default do double " +
+        "else enum extends final finally float for goto if implements import instanceof int interface long native new " +
+        "package private protected public return short static strictfp super switch synchronized this throw throws " +
+        "transient try void volatile while true false null var record yield");
+    // sent by every browser or HTTP client, never something a controller declares
+    var NOISE_HEADERS = nameSet("user-agent referer referrer origin accept accept-language accept-encoding accept-charset " +
+        "connection cache-control pragma dnt upgrade-insecure-requests priority te host content-length content-type " +
+        "cookie authorization x-requested-with if-none-match if-modified-since keep-alive");
+    var MEDIA_CONSTS = { "application/json":"APPLICATION_JSON_VALUE", "application/xml":"APPLICATION_XML_VALUE",
+        "text/xml":"TEXT_XML_VALUE", "text/plain":"TEXT_PLAIN_VALUE", "text/html":"TEXT_HTML_VALUE",
+        "text/event-stream":"TEXT_EVENT_STREAM_VALUE", "application/octet-stream":"APPLICATION_OCTET_STREAM_VALUE",
+        "application/pdf":"APPLICATION_PDF_VALUE", "multipart/form-data":"MULTIPART_FORM_DATA_VALUE",
+        "application/x-www-form-urlencoded":"APPLICATION_FORM_URLENCODED_VALUE", "image/png":"IMAGE_PNG_VALUE",
+        "image/jpeg":"IMAGE_JPEG_VALUE", "image/gif":"IMAGE_GIF_VALUE", "application/x-ndjson":"APPLICATION_NDJSON_VALUE" };
+    var STATUS_NAMES = { "201":"CREATED", "202":"ACCEPTED", "203":"NON_AUTHORITATIVE_INFORMATION", "204":"NO_CONTENT",
+        "205":"RESET_CONTENT", "206":"PARTIAL_CONTENT" };
+    var VERB_ANN = { get:"GetMapping", post:"PostMapping", put:"PutMapping", delete:"DeleteMapping", patch:"PatchMapping" };
+
+    function javaIdent(s, upper){
+        var str = String(s == null ? "" : s), id;
+        if(/^[A-Za-z$][A-Za-z0-9$]*$/.test(str) && !/^[A-Z0-9]+$/.test(str)) id = str;
+        else {
+            id = str.split(/[^A-Za-z0-9\u00C0-\uFFFF]+/).filter(Boolean).map(function(w, i){
+                if(/^[A-Z0-9]+$/.test(w) && w.length > 1) w = w.toLowerCase();
+                return i ? w[0].toUpperCase() + w.slice(1) : w;
+            }).join("");
+        }
+        if(!id) id = "value";
+        if(/^\d/.test(id)) id = "n" + id;
+        id = (upper ? id[0].toUpperCase() : id[0].toLowerCase()) + id.slice(1);
+        return JAVA_KEYWORDS[id] ? id + (upper ? "Type" : "Value") : id;
+    }
+
+    function singular(s){
+        s = String(s);
+        if(/ies$/i.test(s) && s.length > 4) return s.slice(0, -3) + "y";
+        if(/[^s]s$/i.test(s) && s.length > 3) return s.slice(0, -1);
+        return s + "Item";
+    }
+
+    function jstr(s){ return JSON.stringify(String(s)); }
+
+    function mediaArg(ct){
+        var k = String(ct).split(";")[0].trim().toLowerCase();
+        return MEDIA_CONSTS[k] ? "MediaType." + MEDIA_CONSTS[k] : jstr(k);
+    }
+
+    function uniqueName(base, taken){
+        var n = base, k = 2;
+        while(taken[n]) n = base + k++;
+        taken[n] = 1;
+        return n;
+    }
+
+    function pickContent(content){
+        var cts = Object.keys(content || {});
+        var ct = cts.find(function(c){ return /json/i.test(c); }) || cts.find(function(c){ return !/\*/.test(c); }) || cts[0];
+        return ct ? { ct: ct, media: content[ct] || {} } : null;
+    }
+
+    function SpringGen(doc){
+        this.doc = doc;
+        this.taken = {};          // class names in use
+        this.classes = [];        // { name, schema, kind, values }
+        this.byRef = {};
+        this.byShape = {};
+    }
+
+    SpringGen.prototype.propsOf = function(schema){
+        var s = deref(this.doc, schema) || {}, props = {}, req = [], self = this;
+        (Array.isArray(s.allOf) ? s.allOf : []).forEach(function(part){
+            var r = self.propsOf(part);
+            Object.assign(props, r.props);
+            req = req.concat(r.req);
+        });
+        Object.assign(props, s.properties || {});
+        if(Array.isArray(s.required)) req = req.concat(s.required);
+        return { props: props, req: req, desc: s.description };
+    };
+
+    SpringGen.prototype.classFor = function(name, schema, hint){
+        if(name && this.byRef[name]) return this.byRef[name];
+        var shape = name ? null : JSON.stringify(schema);
+        if(shape && this.byShape[shape]) return this.byShape[shape];
+        var cls = uniqueName(javaIdent(name || hint || "Body", true), this.taken);
+        this.classes.push({ name: cls, schema: schema, kind: "class" });
+        if(name) this.byRef[name] = cls; else this.byShape[shape] = cls;
+        return cls;
+    };
+
+    // a Java type for a schema; object schemas become DTO classes named after the hint
+    SpringGen.prototype.type = function(schema, hint, inPart){
+        if(!schema || typeof schema !== "object") return "Object";
+        if(typeof schema.$ref === "string"){
+            var target = resolvePtr(this.doc, schema.$ref);
+            var refName = schema.$ref.split("/").pop();
+            var t0 = target && typeof target === "object" ? target : {};
+            var plain = !t0.properties && !t0.allOf && (t0.type && t0.type !== "object" || t0.enum);
+            return plain ? this.type(t0, refName, inPart) : this.classFor(refName, t0, refName);
+        }
+        if(Array.isArray(schema.allOf) && schema.allOf.length === 1 && !schema.properties) return this.type(schema.allOf[0], hint, inPart);
+        var union = schema.oneOf || schema.anyOf;
+        if(Array.isArray(union) && union.length) return this.type(union[0], hint, inPart);
+        var t = Array.isArray(schema.type) ? schema.type.find(function(x){ return x !== "null"; }) : schema.type;
+        if(!t) t = schema.properties || schema.allOf ? "object" : schema.items ? "array" : schema.enum ? "string" : null;
+        switch(t){
+            case "string":
+                if(schema.format === "binary") return inPart ? "MultipartFile" : "byte[]";
+                if(Array.isArray(schema.enum) && schema.enum.length && schema.enum.every(function(v){
+                    return typeof v === "string" && /^[A-Za-z_$][\w$]*$/.test(v) && !JAVA_KEYWORDS[v];
+                })){
+                    var key = "enum:" + schema.enum.join(",");
+                    if(this.byShape[key]) return this.byShape[key];
+                    var en = uniqueName(javaIdent(hint || "Kind", true), this.taken);
+                    this.classes.push({ name: en, kind: "enum", values: schema.enum.slice() });
+                    return (this.byShape[key] = en);
+                }
+                if(schema.format === "date") return "LocalDate";
+                if(schema.format === "date-time") return "OffsetDateTime";
+                if(schema.format === "uuid") return "UUID";
+                return "String";
+            case "integer": return schema.format === "int64" ? "Long" : "Integer";
+            case "number": return schema.format === "float" ? "Float" : schema.format === "double" ? "Double" : "BigDecimal";
+            case "boolean": return "Boolean";
+            case "file": return "MultipartFile";                                         // swagger 2
+            case "array": return "List<" + this.type(schema.items || {}, singular(hint || "item"), inPart) + ">";
+            case "object":
+                if(Object.keys(this.propsOf(schema).props).length) return this.classFor(null, schema, hint);
+                if(schema.additionalProperties && typeof schema.additionalProperties === "object") {
+                    return "Map<String, " + this.type(schema.additionalProperties, hint, inPart) + ">";
+                }
+                return "Map<String, Object>";
+        }
+        return "Object";
+    };
+
+    SpringGen.prototype.classText = function(c){
+        if(c.kind === "enum") return "public enum " + c.name + " {\n" + c.values.map(function(v){ return "    " + v; }).join(",\n") + "\n}";
+        var self = this, info = this.propsOf(c.schema), taken = {}, lines = [];
+        Object.keys(info.props).forEach(function(prop){
+            var ps = info.props[prop], d = deref(self.doc, ps) || {};
+            var field = uniqueName(javaIdent(prop, false), taken);
+            var type = self.type(ps, prop, false);
+            if(lines.length) lines.push("");
+            if(d.description) lines.push("    /** " + String(d.description).split("\n")[0] + " */");
+            if(info.req.indexOf(prop) >= 0) lines.push("    @NotNull");
+            if(field !== prop) lines.push("    @JsonProperty(" + jstr(prop) + ")");
+            lines.push("    private " + type + " " + field + ";");
+        });
+        var head = info.desc ? "/** " + String(info.desc).split("\n")[0] + " */\n" : "";
+        return head + "@Data\npublic class " + c.name + " {\n" + (lines.length ? lines.join("\n") + "\n" : "    // fields unknown\n") + "}";
+    };
+
+    // "# @controller OrdersController" (or // …) anywhere in the input names the generated class
+    function controllerDirective(src){
+        var m = /^[ \t]*(?:#|\/\/)[ \t]*@controller\b[ \t]*[=:]?[ \t]*([A-Za-z_$][\w$]*)/m.exec(src || "");
+        return m ? m[1] : null;
+    }
+
+    /* openApiToSpring(doc, options) -> { text, count, warns }; options.controller names a wrapping class */
+    function openApiToSpring(doc, o){
+        var gen = new SpringGen(doc), methods = [], methodNames = {}, warns = [], pathKeys = [];
+        var paths = doc && doc.paths && typeof doc.paths === "object" ? doc.paths : {};
+
+        Object.keys(paths).forEach(function(pathKey){
+            var item = deref(doc, paths[pathKey]);
+            if(!item || typeof item !== "object") return;
+            HTTP_METHODS.forEach(function(verb){
+                var op = item[verb];
+                if(!op || typeof op !== "object") return;
+                pathKeys.push(pathKey);
+                var mname = uniqueName(javaIdent(op.operationId || (verb + " " + pathKey.replace(/[{}]/g, "")), false), methodNames);
+                var Hint = mname[0].toUpperCase() + mname.slice(1);
+                var args = [], argNames = {}, consumes = null;
+                var arg = function(ann, type, name){
+                    args.push(ann + " " + type + " " + uniqueName(javaIdent(name, false), argNames));
+                };
+                var paramArgs = function(kind, name, type, required, dflt){
+                    if(o.trimNoise) required = true;      // the copied request did send it
+                    var attrs = [];
+                    if(required === false && dflt === undefined) attrs.push("required = false");
+                    if(dflt !== undefined) attrs.push("defaultValue = " + jstr(dflt));
+                    var a = "@" + kind + (attrs.length ? "(value = " + jstr(name) + ", " + attrs.join(", ") + ")" : "(" + jstr(name) + ")");
+                    arg(a, type, name);
+                };
+
+                collectParams(doc, item, op).forEach(function(p){
+                    var sch = p.schema || p;
+                    var dflt = sch && sch.default !== undefined ? asText(sch.default) : undefined;
+                    if(p.in === "path") return paramArgs("PathVariable", p.name, gen.type(sch, p.name, false), true);
+                    if(p.in === "query"){
+                        if(!o.allp && p.required !== true) return;
+                        return paramArgs("RequestParam", p.name, gen.type(sch, p.name, false), p.required === true, dflt);
+                    }
+                    if(p.in === "header"){
+                        var lk = String(p.name).toLowerCase();
+                        if(NOISE_HEADERS[lk] || /^(sec-|x-forwarded-)/.test(lk)) return;
+                        return paramArgs("RequestHeader", p.name, gen.type(sch, p.name, false), p.required === true, dflt);
+                    }
+                    if(p.in === "cookie"){
+                        if(o.trimNoise) return;           // cookies copied from a browser are session noise
+                        return paramArgs("CookieValue", p.name, gen.type(sch, p.name, false), p.required === true, dflt);
+                    }
+                    if(p.in === "body") return arg("@RequestBody", gen.type(p.schema, Hint + "Request", false), "body");
+                    if(p.in === "formData"){
+                        consumes = consumes || (p.type === "file" ? "multipart/form-data" : null);
+                        return paramArgs("RequestParam", p.name, gen.type(p, p.name, true), p.required === true, dflt);
+                    }
+                });
+
+                var rb = deref(doc, op.requestBody);
+                var body = rb && rb.content ? pickContent(rb.content) : null;
+                if(body){
+                    var ct = body.ct.split(";")[0].trim().toLowerCase(), media = deref(doc, body.media) || {};
+                    if(/multipart|x-www-form-urlencoded/.test(ct)){
+                        consumes = ct;
+                        var info = gen.propsOf(media.schema || {});
+                        Object.keys(info.props).forEach(function(k){
+                            var ps = info.props[k], d = deref(doc, ps) || {};
+                            var t = gen.type(ps, k, true), req = info.req.indexOf(k) >= 0;
+                            var structured = /multipart/.test(ct) && !/MultipartFile/.test(t) && (d.properties || ps.$ref && !d.enum && d.type !== "string");
+                            if(structured) arg("@RequestPart" + (req ? "(" + jstr(k) + ")" : "(value = " + jstr(k) + ", required = false)"), t, k);
+                            else paramArgs("RequestParam", k, t, req, d.default !== undefined ? asText(d.default) : undefined);
+                        });
+                    } else {
+                        if(!/json/.test(ct)) consumes = ct;
+                        var bt = /^text\//.test(ct) && !(media.schema && (deref(doc, media.schema) || {}).type === "object") ? "String"
+                            : gen.type(media.schema || { type: "string", format: "binary" }, Hint + "Request", false);
+                        var bn = /^[A-Z]\w*$/.test(bt) && !/^(String|Object|Integer|Long|Boolean|BigDecimal)$/.test(bt) ? bt : "body";
+                        arg(rb.required === false ? "@RequestBody(required = false)" : "@RequestBody", bt, bn);
+                    }
+                }
+
+                // first 2xx response decides the return type
+                var codes = Object.keys(op.responses || {}).filter(function(c){ return /^2/.test(c); }).sort();
+                var code = codes[0] || "200", ret = "void", produces = null;
+                var resp = deref(doc, (op.responses || {})[code]);
+                var rc = resp && resp.content ? pickContent(resp.content) : null;
+                if(rc){
+                    var rm = deref(doc, rc.media) || {};
+                    if(!/json|\*/.test(rc.ct)) produces = rc.ct;
+                    ret = rm.schema ? gen.type(rm.schema, Hint + "Response", false) : (/^text\//.test(rc.ct) ? "String" : "Object");
+                } else if(resp && resp.schema){                                     // swagger 2
+                    ret = gen.type(resp.schema, Hint + "Response", false);
+                }
+
+                var attrs = [jstr(pathKey)];
+                if(consumes) attrs.push("consumes = " + mediaArg(consumes));
+                if(produces) attrs.push("produces = " + mediaArg(produces));
+                var annLine;
+                if(VERB_ANN[verb]) annLine = "@" + VERB_ANN[verb] + "(" + (attrs.length > 1 ? "value = " + attrs.join(", ") : attrs[0]) + ")";
+                else annLine = "@RequestMapping(value = " + attrs.concat(["method = RequestMethod." + verb.toUpperCase()]).join(", ") + ")";
+
+                var out = [];
+                if(o.desc){
+                    var doclines = [];
+                    if(op.summary) doclines.push(String(op.summary).split("\n")[0]);
+                    if(op.description) String(op.description).replace(/\s+$/, "").split("\n").forEach(function(l){ doclines.push(l); });
+                    if(doclines.length){
+                        out.push("/**");
+                        doclines.forEach(function(l){ out.push((" * " + l).replace(/\s+$/, "")); });
+                        out.push(" */");
+                    }
+                    if(op.deprecated === true) out.push("@Deprecated");
+                }
+                out.push(annLine);
+                if(STATUS_NAMES[code] && !codes.some(function(c){ return c === "200"; })) out.push("@ResponseStatus(HttpStatus." + STATUS_NAMES[code] + ")");
+                var sig = "public " + ret + " " + mname + "(";
+                var one = sig + args.join(", ") + ") {";
+                if(one.length + 4 <= 120 || args.length < 2) out.push(one);
+                else {
+                    var pad = " ".repeat(sig.length);
+                    out.push(sig + args[0] + ",");
+                    args.slice(1).forEach(function(a, k){ out.push(pad + a + (k === args.length - 2 ? ") {" : ",")); });
+                }
+                out.push(ret === "void" ? "}" : "    return null;\n}");
+                methods.push(out.join("\n"));
+            });
+        });
+
+        if(!methods.length) return { text: "", count: 0, warns: ["no operations to turn into Spring methods"] };
+
+        // a class around the methods only when something names it; otherwise just the methods and their DTOs
+        var cname = o.controller || null;
+        var dtos = [];
+        if(cname) gen.taken[cname] = 1;
+        for(var k = 0; k < gen.classes.length; k++) dtos.push(gen.classText(gen.classes[k]));   // may queue more classes
+        var code = cname
+            ? "@RestController\npublic class " + cname + " {\n\n" + methods.map(function(m){
+            return m.split("\n").map(function(l){ return l ? "    " + l : l; }).join("\n");
+        }).join("\n\n") + "\n}"
+            : methods.join("\n\n");
+        return { text: code + (dtos.length ? "\n\n" + dtos.join("\n\n") : "") + "\n", count: methods.length, warns: warns };
+    }
+
+
     /* =================== detect + convert =================== */
 
     var DEFAULTS = {
@@ -1504,6 +2653,7 @@
         if(/(^|\n)\s*(?:[\w./\\-]*\/)?curl(?:\.exe)?[\s'"]/i.test("\n" + t)) return "curl";
         if(/^\s*"?(openapi|swagger)"?\s*:/mi.test(t)) return "openapi";
         if(/^\s*"?paths"?\s*:/mi.test(t)) return "openapi";
+        if(SPRING_MAPPING.test(t)) return "spring";
         if(/^\s*"?\/[^\s:"]*"?\s*:\s*\{?\s*$/m.test(t)) return "openapi";
         if(/^\s*(get|post|put|patch|delete|head|options):\s*$/mi.test(t)) return "openapi";
         if(t[0] === "{") return "openapi";
@@ -1553,11 +2703,26 @@
         return { doc: doc };
     }
 
-    function runOpenApi(src, o){
-        var s = readSpec(src);
+    // an OpenAPI doc from either a pasted spec or Spring controller code
+    function specOf(src, mode){
+        if(mode !== "spring") return readSpec(src);
+        try{ return springToOpenApi(src); }
+        catch(e){ return { err: "Could not read the Java code: " + (e && e.message || e) }; }
+    }
+
+    function specCnt(s){
+        if(!s.doc.openapi || s.count === undefined) return pathCountOf(s.doc);
+        return s.count > 1 ? s.count + " endpoints" : "";
+    }
+
+    function runOpenApi(src, o, mode){
+        var s = specOf(src, mode);
         if(s.err) return { text:"", count:0, err: s.err };
-        var res = openApiToHttp(s.doc, o);
-        return { text: res.text, count: res.count, cnt: pathCountOf(s.doc), err: uniq(res.warnings).join(" · ") };
+        // a bare method has no class to name the file after
+        var doc = mode === "spring" && !s.titled ? Object.assign({}, s.doc, { info: null }) : s.doc;
+        var res = openApiToHttp(doc, o);
+        var warns = (s.warns || []).concat(noFieldsWarn(s.bodyUnknown || []), res.warnings);
+        return { text: res.text, count: res.count, cnt: specCnt(s), err: uniq(warns).join(" · ") };
     }
 
     /* convert(source, detected mode, "http" | "curl" | "openapi", options) -> { text, count, cnt, err } */
@@ -1570,23 +2735,35 @@
             return auto || "";
         }
         if(mode === "unknown"){
-            return { text:"", count:0, err:"Can't tell the format. Paste a curl command, IDEA .http requests, or an OpenAPI spec." };
+            return { text:"", count:0, err:"Can't tell the format. Paste a curl command, IDEA .http requests, an OpenAPI spec or Spring controller code." };
         }
-        var fin = Object.assign({}, opt, { host: mode === "openapi" ? opt.ohost : opt.host, nameFor: nameFor });
+        var specIn = mode === "openapi" || mode === "spring";
+        var fin = Object.assign({}, opt, { host: specIn ? opt.ohost : opt.host, nameFor: nameFor });
 
-        if(mode === "openapi" && target === "openapi"){
-            var s = readSpec(src);
+        if(specIn && target === "spring"){
+            var ss = specOf(src, mode);
+            if(ss.err) return { text:"", count:0, err: ss.err };
+            var title = ss.doc.info && ss.doc.info.title;
+            var named = mode === "spring" ? ss.titled && /^[A-Za-z_$][\w$]*$/.test(title) : /^[A-Z][\w$]*Controller$/.test(title || "");
+            var sr = openApiToSpring(ss.doc, Object.assign({}, fin, { controller: controllerDirective(src) || (named ? title : null) }));
+            var sw2 = (ss.warns || []).concat(noFieldsWarn(ss.unknown || []), sr.warns);
+            return { text: sr.text, count: sr.count, cnt: specCnt(ss), err: uniq(sw2).join(" · ") };
+        }
+
+        if(specIn && target === "openapi"){
+            var s = specOf(src, mode);
             if(s.err) return { text:"", count:0, err: s.err };
             var ops = 0, p = s.doc.paths || s.doc;
             if(p && typeof p === "object") Object.keys(p).forEach(function(k){
                 if(p[k] && typeof p[k] === "object") HTTP_METHODS.forEach(function(m){ if(p[k][m]) ops++; });
             });
-            return { text: dumpYaml(s.doc), count: ops, cnt: pathCountOf(s.doc) };
+            var sw = (s.warns || []).concat(noFieldsWarn(s.unknown || []));
+            return { text: dumpYaml(s.doc), count: ops, cnt: specCnt(s), err: uniq(sw).join(" · ") };
         }
 
         if(target === "http"){
             if(mode === "curl") return runCurl(src, fin);
-            if(mode === "openapi") return runOpenApi(src, fin);
+            if(specIn) return runOpenApi(src, fin, mode);
             var hm = parseHttp(src);
             if(!hm.reqs.length) return { text:"", count:0, err:"No request line found." };
             return { text: httpFromModel(hm, fin), count: hm.reqs.length, cnt: hm.reqs.length > 1 ? hm.reqs.length + " requests" : "" };
@@ -1599,13 +2776,19 @@
         } else {
             // go through .http first, host and names are applied at the end
             var mid = Object.assign({}, opt, { host:false, ohost:false, query:false, name:true, nameFor: sameName });
-            var r = mode === "curl" ? runCurl(src, mid) : runOpenApi(src, mid);
+            var r = mode === "curl" ? runCurl(src, mid) : runOpenApi(src, mid, mode);
             if(!r.text) return r;
             model = parseHttp(r.text);
             cnt = r.cnt; warn = r.err;
         }
         if(!model.reqs.length) return { text:"", count:0, cnt: cnt, err: warn || "No requests found." };
-        var res = target === "curl" ? toCurl(model, fin) : toOpenApi(model, fin);
+        var res;
+        if(target === "spring"){
+            var oa = toOpenApi(model, fin);
+            var sp = oa.count ? openApiToSpring(oa.doc, Object.assign({}, fin, { trimNoise: true, controller: controllerDirective(src) }))
+                : { text:"", count:0, warns:[] };
+            res = { text: sp.text, count: sp.count, warns: oa.warns.concat(sp.warns) };
+        } else res = target === "curl" ? toCurl(model, fin) : toOpenApi(model, fin);
         return { text: res.text, count: res.count, cnt: cnt, err: uniq([warn].concat(res.warns)).join(" · ") };
     }
 
@@ -1628,7 +2811,7 @@
         try{
             var saved = JSON.parse(localStorage.getItem(STORE) || "{}");
             if(saved.hostVar) OPT.hostVar = saved.hostVar;
-            if(["http","curl","openapi"].indexOf(saved.target) >= 0) TARGET = saved.target;
+            if(["http","curl","openapi","spring"].indexOf(saved.target) >= 0) TARGET = saved.target;
         }catch(_){}
         function persist(){
             try{ localStorage.setItem(STORE, JSON.stringify({ hostVar: OPT.hostVar, target: TARGET })); }catch(_){}
@@ -1637,11 +2820,13 @@
         var SEGS = {
             curl: ["host","query","name"],
             http: ["host","query","name"],
-            openapi: ["body","desc","allp","accept","auth","vars","ohost","query","name"]
+            openapi: ["body","desc","allp","accept","auth","vars","ohost","query","name"],
+            spring: ["body","desc","allp","accept","vars","ohost","query","name"]
         };
-        var DROP = { http: [], curl: ["query","name"], openapi: ["query"] };
+        var DROP = { http: [], curl: ["query","name"], openapi: ["query"],
+            spring: ["host","ohost","query","name","vars","accept","body","auth"] };
         var HOLD = { host: "host", ohost: "host", name: "name" };
-        var FILES = { http: "requests.http", curl: "requests.sh", openapi: "openapi.yaml" };
+        var FILES = { http: "requests.http", curl: "requests.sh", openapi: "openapi.yaml", spring: "Controller.java" };
 
         function labelOf(key){
             if(HOLD[key] === "host") return "{{" + OPT.hostVar + "}}";
@@ -1652,7 +2837,7 @@
         /* ---------- toggles, with hold-to-edit on host and @name ---------- */
 
         function segKeys(){
-            if(SRC === "openapi" && TARGET === "openapi") return [];
+            if((SRC === "openapi" || SRC === "spring") && TARGET === "openapi") return [];
             var drop = DROP[TARGET];
             return SEGS[SEGS[SRC] ? SRC : "http"].filter(function(k){ return drop.indexOf(k) < 0; });
         }
@@ -1742,6 +2927,167 @@
             f.querySelectorAll("[data-f]").forEach(function(s){ s.classList.toggle("on", s.getAttribute("data-f") === mode); });
         }
 
+        /* ---------- file parts: a + on every file line of the output ---------- */
+
+        var PICKS = {};      // "request:part:n" -> [{ name, type }]
+        var plusEl = $("#pluses"), fpick = $("#fpick"), pickKey = null, LINE_KEYS = [];
+
+        // file parts in the output, keyed by request number + part name so picks survive toggles
+        function fileParts(text){
+            var lines = text.split("\n"), parts = [], req = 0, seen = {};
+            var key = function(name){
+                var k = req + ":" + name;
+                seen[k] = (seen[k] || 0) + 1;
+                return k + ":" + seen[k];
+            };
+            if(TARGET === "curl"){
+                lines.forEach(function(l, i){
+                    if(/^curl\b/.test(l)) req++;
+                    var m = /-F '([^'=]+)=@/.exec(l);
+                    if(m) parts.push({ key: key(m[1]), name: m[1], start: i, end: i + 1, files: 1 });
+                });
+            } else if(TARGET === "http"){
+                lines.forEach(function(l, i){
+                    if(/^###/.test(l)) req++;
+                    var m = /^Content-Disposition:.*?\bname="([^"]*)".*\bfilename=/i.exec(l);
+                    if(!m) return;
+                    var start = i, end = i + 1;
+                    while(start > 0 && !/^--\S/.test(lines[start])) start--;
+                    while(end < lines.length && !/^--\S/.test(lines[end])) end++;
+                    var files = lines.slice(i, end).filter(function(x){ return /^<\s/.test(x); }).length;
+                    parts.push({ key: key(m[1]), name: m[1], start: start, end: end, bline: lines[start], files: files });
+                });
+            }
+            return parts;
+        }
+
+        // swaps picked files into their parts; LINE_KEYS gets the part key of each file line, top to bottom
+        function applyPicks(text, parts){
+            var lines = text.split("\n");
+            LINE_KEYS = [];
+            parts.forEach(function(p){
+                var n = PICKS[p.key] ? PICKS[p.key].length : p.files;
+                for(var k = 0; k < n; k++) LINE_KEYS.push(p.key);
+            });
+            parts.slice().reverse().forEach(function(p){
+                var files = PICKS[p.key];
+                if(!files) return;
+                var out = [];
+                if(TARGET === "curl"){
+                    var l = lines[p.start], indent = l.match(/^\s*/)[0], cont = / \\$/.test(l) ? " \\" : "";
+                    files.forEach(function(f, n){
+                        out.push(indent + "-F " + sq(p.name + "=@" + (f.path || "./" + f.name) + (f.type ? ";type=" + f.type : ""))
+                            + (n < files.length - 1 ? " \\" : cont));
+                    });
+                } else {
+                    files.forEach(function(f){
+                        out.push(p.bline, 'Content-Disposition: form-data; name="' + p.name + '"; filename="' + f.name.replace(/"/g, "%22") + '"');
+                        if(f.type) out.push("Content-Type: " + f.type);
+                        out.push("", "< " + (f.path || "./" + f.name));
+                    });
+                }
+                lines.splice.apply(lines, [p.start, p.end - p.start].concat(out));
+            });
+            return lines.join("\n");
+        }
+
+        // line numbers of the file lines in what's in the output box now (it can be edited by hand)
+        function fileLineNos(text){
+            var lines = text.split("\n"), nos = [], inFile = false;
+            lines.forEach(function(l, i){
+                if(TARGET === "curl"){ if(/-F '[^'=]+=@/.test(l)) nos.push(i); return; }
+                if(/^--\S/.test(l)){ inFile = false; return; }
+                if(/^Content-Disposition:.*\bfilename=/i.test(l)){ inFile = true; return; }
+                if(inFile && /^<\s/.test(l)) nos.push(i);
+            });
+            return nos;
+        }
+
+        var measureCtx = document.createElement("canvas").getContext("2d");
+        function placePluses(){
+            plusEl.innerHTML = "";
+            var nos = fileLineNos(outEl.value);
+            if(!nos.length || !LINE_KEYS.length) return;
+            var cs = getComputedStyle(outEl);
+            var lh = parseFloat(cs.lineHeight) || 19.5, padT = parseFloat(cs.paddingTop), padL = parseFloat(cs.paddingLeft);
+            measureCtx.font = cs.fontStyle + " " + cs.fontWeight + " " + cs.fontSize + " " + cs.fontFamily;
+            var lines = outEl.value.split("\n"), viewH = outEl.clientHeight, viewW = outEl.clientWidth;
+            plusEl.style.width = viewW + "px";
+            plusEl.style.height = viewH + "px";
+            nos.forEach(function(i, idx){
+                var key = LINE_KEYS[idx];
+                if(!key) return;
+                var top = padT + i * lh - outEl.scrollTop + (lh - 17) / 2;
+                if(top < -17 || top > viewH) return;
+                var picked = PICKS[key];
+                var b = document.createElement("button");
+                b.type = "button";
+                b.textContent = "+";
+                b.title = "Copy the files' paths first (Explorer: Ctrl+Shift+C), then click to put them here.\n" +
+                    "With no paths copied it opens a file picker, which only knows file names.";
+                b.setAttribute("aria-label", "Pick files for " + key.split(":")[1]);
+                b.setAttribute("aria-pressed", String(!!picked));
+                b.style.top = top + "px";
+                b.style.left = (padL + measureCtx.measureText(lines[i]).width - outEl.scrollLeft + 10) + "px";
+                b.onclick = function(){ pickFiles(key); };
+                plusEl.appendChild(b);
+            });
+        }
+
+        var MIME = { pdf:"application/pdf", xml:"application/xml", json:"application/json", txt:"text/plain", csv:"text/csv",
+            html:"text/html", htm:"text/html", png:"image/png", jpg:"image/jpeg", jpeg:"image/jpeg", gif:"image/gif",
+            svg:"image/svg+xml", webp:"image/webp", zip:"application/zip", gz:"application/gzip", "7z":"application/x-7z-compressed",
+            doc:"application/msword", docx:"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            xls:"application/vnd.ms-excel", xlsx:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            rtf:"application/rtf", odt:"application/vnd.oasis.opendocument.text", tif:"image/tiff", tiff:"image/tiff",
+            sig:"application/pkcs7-signature", p7s:"application/pkcs7-signature", sgn:"application/pkcs7-signature" };
+
+        // full paths copied from the file manager: Explorer's "Copy as path", file:// URIs, or plain paths, one per line
+        function pathsFrom(text){
+            var lines = String(text || "").split(/\r?\n/).map(function(l){ return l.trim().replace(/^"(.*)"$/, "$1"); }).filter(Boolean);
+            if(!lines.length || lines.length > 500) return null;
+            var paths = [];
+            for(var k = 0; k < lines.length; k++){
+                var l = lines[k];
+                if(/^file:\/\//i.test(l)){
+                    try{ l = decodeURIComponent(l.replace(/^file:\/\/(localhost)?/i, "")).replace(/^\/([A-Za-z]:)/, "$1"); }catch(_){ return null; }
+                }
+                if(!/^([A-Za-z]:[\\\/]|\\\\|\/|~\/)/.test(l) || /[\r\n<>|]/.test(l)) return null;
+                paths.push(l.replace(/\\/g, "/").replace(/^\/\/(?=[^/])/, "\\\\"));
+            }
+            return paths.map(function(path){
+                var name = path.split("/").pop();
+                var ext = (/\.([^.]+)$/.exec(name) || [])[1];
+                return { name: name, type: ext ? MIME[ext.toLowerCase()] || "" : "", path: path };
+            });
+        }
+
+        async function pickFiles(key){
+            var text = null;
+            try{ if(navigator.clipboard && navigator.clipboard.readText) text = await navigator.clipboard.readText(); }catch(_){}
+            var files = pathsFrom(text);
+            if(files){
+                PICKS[key] = files;
+                run();
+                toast(files.length > 1 ? files.length + " paths added" : "Path added");
+                return;
+            }
+            pickKey = key; fpick.value = ""; fpick.click();
+        }
+
+        fpick.addEventListener("change", function(){
+            var list = Array.prototype.slice.call(fpick.files || []);
+            if(!pickKey || !list.length) return;
+            PICKS[pickKey] = list.map(function(f){ return { name: f.name, type: f.type }; });
+            pickKey = null;
+            run();
+        });
+
+        outEl.addEventListener("scroll", placePluses);
+        outEl.addEventListener("input", placePluses);
+        if(window.ResizeObserver) new ResizeObserver(placePluses).observe(outEl);
+        else window.addEventListener("resize", placePluses);
+
         function run(){
             var text = srcEl.value;
             var mode = text.trim() ? detectMode(text) : null;
@@ -1750,14 +3096,18 @@
             if(!mode){
                 outEl.value = ""; $("#err").textContent = "";
                 $("#cnt").textContent = ""; $("#ocnt").textContent = "";
+                LINE_KEYS = []; placePluses();
                 return;
             }
             var r;
             try{ r = convert(text, mode, TARGET, OPT); }
             catch(e){ r = { text:"", count:0, err:"Conversion failed: " + (e && e.message || e) }; }
-            outEl.value = r.text || "";
+            var parts = fileParts(r.text || "");
+            LINE_KEYS = [];
+            outEl.value = parts.length ? applyPicks(r.text, parts) : (r.text || "");
+            placePluses();
             $("#cnt").textContent = r.cnt || "";
-            var unit = TARGET === "openapi" ? "operation" : "request";
+            var unit = TARGET === "openapi" ? "operation" : TARGET === "spring" ? "endpoint" : "request";
             $("#ocnt").textContent = r.count ? r.count + " " + unit + (r.count > 1 ? "s" : "") : "";
             $("#err").textContent = r.err || "";
         }
@@ -1786,7 +3136,7 @@
         sel.addEventListener("change", function(){ setTarget(sel.value); });
         tbtns.forEach(function(b){ b.addEventListener("click", function(){ setTarget(b.getAttribute("data-t")); }); });
 
-        $("#clear").onclick = function(){ srcEl.value = ""; run(); srcEl.focus(); };
+        $("#clear").onclick = function(){ srcEl.value = ""; PICKS = {}; run(); srcEl.focus(); };
 
         /* ---------- clipboard: buttons and keys ---------- */
 
