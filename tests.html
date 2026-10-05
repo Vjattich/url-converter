@@ -50,6 +50,63 @@
             a.strictEqual(out, expected, tag + ' · ' + detectMode(input) + ' → ' + target);
         }
 
+        check(``,``);
+
+        check(`@PostMapping("/api/v1/contracts/search")
+public Object contractsSearch(@RequestParam("status") String status,
+                              @RequestParam("page") Integer page,
+                              @RequestHeader("x-trace-id") String xTraceId,
+                              @RequestBody ContractsSearchRequest contractsSearchRequest) {
+    return null;
+}
+
+@Data
+public class ContractsSearchRequest {
+    private String number;
+
+    @JsonProperty("sum_total")
+    private BigDecimal sumTotal;
+
+    private List<Item> items;
+}`,
+            `### contractsSearch
+# @name contractsSearch
+POST {{host}}/api/v1/contracts/search?status={{status}}&page={{page}}
+Content-Type: application/json
+Accept: application/json
+x-trace-id: {{x_trace_id}}
+
+{
+  "number": "string",
+  "sum_total": 0,
+  "items": [
+    {}
+  ]
+}`);
+
+
+        check(`@PostMapping(value = "/sign-service/signature/check/v2", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+public Object checkV2(@RequestParam("sign") MultipartFile sign, @RequestParam("file") MultipartFile file) {
+   return null;
+}`,
+            `### checkV2
+# @name checkV2
+POST {{host}}/sign-service/signature/check/v2
+Content-Type: multipart/form-data; boundary=WebAppBoundary
+Accept: application/json
+
+--WebAppBoundary
+Content-Disposition: form-data; name="sign"; filename="sign"
+
+< ./sign
+--WebAppBoundary
+Content-Disposition: form-data; name="file"; filename="file"
+
+< ./file
+--WebAppBoundary--`);
+
+
+
         check(`curl 'https://shop.example.com/api/v1/orders/search?page=0&size=20&sort=createdAt,desc' \\
   -H 'accept: application/json, text/plain, */*' \\
   -H 'accept-language: en-US,en;q=0.9' \\
@@ -555,14 +612,15 @@ Authorization: Bearer {{token}}
 ### Upload photo
 # @name uploadPhoto
 POST {{host}}/v1/pets/{{id}}/photos
-Content-Type: multipart/form-data
+Content-Type: multipart/form-data; boundary=WebAppBoundary
 X-Request-Id: {{X_Request_Id}}
 Authorization: Bearer {{token}}
 
 --WebAppBoundary
 Content-Disposition: form-data; name="file"
+; filename="file"
 
-
+< ./file
 --WebAppBoundary
 Content-Disposition: form-data; name="kind"
 
@@ -714,7 +772,7 @@ curl -X PUT "\${host}/api/v1/pets/\${id}" \\
 curl -X POST "\${host}/api/v1/pets/\${id}/photos" \\
   -H "X-Request-Id: \${X_Request_Id}" \\
   -H "Authorization: Bearer \${token}" \\
-  -F 'file=' \\
+  -F 'file=@./file' \\
   -F 'kind=AVATAR'`);
 
     });
