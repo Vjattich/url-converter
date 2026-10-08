@@ -52,6 +52,25 @@
 
         check(``,``);
 
+        check(`curl.exe ^"https://localhost:8080/nsi/api/participants/customer/5877^" ^
+  -H ^"User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:157.0) Gecko/20100101 Firefox/157.0^" ^
+  -H ^"Accept: application/json^" ^
+  -H ^"Accept-Language: en-US,en;q=0.9^" ^
+  -H ^"Accept-Encoding: gzip, deflate, br, zstd^" ^
+  -H ^"Connection: keep-alive^" ^
+  Gb^%^2Fx; eaist_identifier=lukinykh^" ^
+  -H ^"Sec-Fetch-Dest: empty^" ^
+  -H ^"Sec-Fetch-Mode: cors^" ^
+  -H ^"Sec-Fetch-Site: same-origin^" ^
+  -H ^"Priority: u=0^"`,`###
+# @name customer-5877
+GET https://localhost:8080/nsi/api/participants/customer/5877
+User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:157.0) Gecko/20100101 Firefox/157.0
+Accept: application/json
+Accept-Language: en-US,en;q=0.9
+Accept-Encoding: gzip, deflate, br, zstd
+Connection: keep-alive`);
+
         check(`@PostMapping("/api/v1/contracts/search")
 public Object contractsSearch(@RequestParam("status") String status,
                               @RequestParam("page") Integer page,

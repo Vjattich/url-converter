@@ -185,7 +185,58 @@
         return { text: out, end: i + 1 };
     }
 
+    /* ---------- cmd.exe ("Copy as cURL (Windows)" in Firefox / Chrome) ---------- */
+
+    function looksLikeCmd(src) {
+        return /(?:^|\s)\^"/.test(src) || /[ \t]\^[ \t]*\r?\n/.test(src);
+    }
+    // (whose first char is then literal, so ^<nl><nl> is a newline inside a value)
+    function cmdUnescape(src) {
+        const s = src.replace(/\r\n?/g, "\n");
+        let out = "", q = false;
+        for (let i = 0; i < s.length; i++) {
+            const c = s[i];
+            if (c === "\n") { q = false; out += c; continue; }
+            if (c === '"') { q = !q; out += c; continue; }
+            if (q) { out += c; continue; }
+            if (c === "&" || c === "|") { out += "\n"; continue; }        // command separators
+            if (c !== "^") { out += c; continue; }
+            if (/^[ \t]*\n/.test(s.slice(i + 1, i + 40)) && s[i + 1] !== "\n") {
+                i = s.indexOf("\n", i);                                    // "^   " + newline
+            } else if (s[i + 1] === "\n") i++;
+            if (i + 1 < s.length) out += s[++i];
+        }
+        return out;
+    }
+
+    function crtSplit(s) {
+        const toks = [];
+        let cur = "", has = false, q = false;
+        for (let i = 0; i < s.length; i++) {
+            const c = s[i];
+            if (c === "\\") {
+                let n = 0;
+                while (s[i] === "\\") { n++; i++; }
+                has = true;
+                if (s[i] === '"') {
+                    cur += "\\".repeat(n >> 1);
+                    if (n & 1) { cur += '"'; continue; }
+                } else cur += "\\".repeat(n);
+                i--; continue;
+            }
+            if (c === '"') {
+                if (q && s[i + 1] === '"') { cur += '"'; i++; continue; }
+                q = !q; has = true; continue;
+            }
+            if (!q && /\s/.test(c)) { if (has) { toks.push(cur); cur = ""; has = false; } continue; }
+            cur += c; has = true;
+        }
+        if (has) toks.push(cur);
+        return toks;
+    }
+
     function tokenize(src) {
+        if (looksLikeCmd(src)) return crtSplit(cmdUnescape(src));
         const toks = [];
         let i = 0, cur = "", has = false;
         const n = src.length;
