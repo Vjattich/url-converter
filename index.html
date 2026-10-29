@@ -652,15 +652,39 @@
         if (i >= L.length) return null;
         const first = clean(L[i]).trim();
         const ind0 = indentOf(clean(L[i]));
-        return (first === "-" || first.startsWith("- ")) ? parseSeq(ind0) : parseMap(ind0);
+        if (first === "-" || first.startsWith("- ")) return parseSeq(ind0);
+        const root = parseMap(ind0);
+        for (;;) {
+            skip();
+            if (i >= L.length) break;
+            const t = clean(L[i]).trim();
+            if (t === "-" || t.startsWith("- ")) { i++; continue; }
+            const before = i;
+            Object.assign(root, parseMap(indentOf(clean(L[i]))));
+            if (i === before) i++;
+        }
+        return root;
+    }
+
+    function normalizeSpec(doc) {
+        if (!doc || typeof doc !== "object" || Array.isArray(doc) || (doc.paths && typeof doc.paths === "object")) return doc;
+        const keys = Object.keys(doc);
+        if (!keys.some(k => k.startsWith("/"))) return doc;
+        const out = {}, paths = {};
+        keys.forEach(k => {
+            if (!k.startsWith("/")) { out[k] = doc[k]; return; }
+            if (!out.paths) out.paths = paths;
+            paths[k] = doc[k];
+        });
+        return out;
     }
 
     function parseSpec(text) {
         const t = text.trim();
         if (t.startsWith("{") || t.startsWith("[")) {
-            try { return JSON.parse(t); } catch (_) { /* fall through to yaml */ }
+            try { return normalizeSpec(JSON.parse(t)); } catch (_) { /* fall through to yaml */ }
         }
-        return parseYaml(text);
+        return normalizeSpec(parseYaml(text));
     }
 
 
@@ -696,7 +720,8 @@
             seen.add(node);
             for (const k of Object.keys(node)) {
                 const v = node[k];
-                if (k === name && looksDefined(v)) return v;
+                const selfRef = v && typeof v.$ref === "string" && v.$ref.split("/").pop() === name;
+                if (k === name && looksDefined(v) && !selfRef) return v;
                 if (v && typeof v === "object") queue.push(v);
             }
         }
@@ -2746,12 +2771,29 @@
         return n ? n + (n > 1 ? " paths" : " path") : "";
     }
 
+    // $refs that point at nothing in the paste (a schema left out of the copied fragment)
+    function missingRefs(doc){
+        var out = [], seen = new Set();
+        (function walk(node){
+            if(!node || typeof node !== "object" || seen.has(node)) return;
+            seen.add(node);
+            if(typeof node.$ref === "string" && node.$ref[0] === "#" && resolvePtr(doc, node.$ref) == null){
+                var name = node.$ref.split("/").pop();
+                if(out.indexOf(name) < 0) out.push(name);
+            }
+            Object.keys(node).forEach(function(k){ walk(node[k]); });
+        })(doc);
+        return out;
+    }
+
     function readSpec(src){
         var doc;
         try{ doc = parseSpec(src); }
         catch(e){ return { err: "Could not read the spec: " + (e && e.message || e) }; }
         if(!doc) return { err: "Could not read the spec." };
-        return { doc: doc };
+        var missing = missingRefs(doc);
+        return { doc: doc, warns: missing.length
+                ? ["no schema for " + missing.join(", ") + ", paste " + (missing.length > 1 ? "them" : "it") + " too"] : [] };
     }
 
     // an OpenAPI doc from either a pasted spec or Spring controller code

@@ -793,6 +793,242 @@ curl -X POST "\${host}/api/v1/pets/\${id}/photos" \\
   -F 'file=@./file' \\
   -F 'kind=AVATAR'`);
 
+        /* a paths fragment copied from the middle of a spec: the first line keeps its indent,
+           components sit at column 0 and one $ref (sortDir) points outside the paste */
+        check(`  /offsetPurchaseSuppliers:
+    post:
+      tags:
+        - Contract
+      description: Получение поставщиков из оффсетных контрактов
+      operationId: getOffsetPurchaseSuppliers
+      requestBody:
+        description: фильтр
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/offsetPurchaseSupplierFilter'
+      responses:
+        200:
+          description: список поставщиков из оффсетных контрактов
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/offsetPurchaseSupplierDTO'
+components:
+  schemas:
+    offsetPurchaseSupplierDTO:
+      type: object
+      properties:
+        contractId:
+          type: integer
+          format: int64
+          description: id контракта
+        supplierId:
+          type: integer
+          format: int64
+          description: id поставщика
+        registryNumberEis:
+          type: string
+          description: Реестровый номер ЕИС
+        contractName:
+          type: string
+          description: Наименование контракта
+        customerShortName:
+          type: string
+          description: Краткое наименование заказчика
+        supplierShortName:
+          type: string
+          description: Краткое наименование поставщика
+        supplierInn:
+          type: string
+          description: ИНН поставщика
+        supplierKpp:
+          type: string
+          description: КПП поставщика
+        supplierMspCategoryId:
+          type: string
+          description: Тип предприятия
+        supplierIsSocial:
+          type: boolean
+          description: Признак СОНО
+    offsetPurchaseSupplierFilter:
+      type: object
+      properties:
+        supplierNameOrInn:
+          type: string
+          description: «Полное наименование» (п. 3) или «ИНН» (п. 4)
+        page:
+          type: integer
+          description: номер страницы
+        pageSize:
+          type: integer
+          description: количество элементов на странице
+        sort:
+          type: string
+          description: сортировка
+        sortDir:
+          $ref: '#/components/schemas/sortDir'
+`,
+            `### getOffsetPurchaseSuppliers
+# Получение поставщиков из оффсетных контрактов
+# tags: Contract
+# @name getOffsetPurchaseSuppliers
+POST {{host}}/offsetPurchaseSuppliers
+Content-Type: application/json
+Accept: application/json
+
+{
+  "supplierNameOrInn": "string",
+  "page": 0,
+  "pageSize": 0,
+  "sort": "string",
+  "sortDir": null
+}`);
+
+        check(`/offsetPurchaseSuppliers:
+    post:
+      tags:
+        - Contract
+      description: Получение поставщиков из оффсетных контрактов
+      operationId: getOffsetPurchaseSuppliers
+      requestBody:
+        description: фильтр
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/offsetPurchaseSupplierFilter'
+      responses:
+        200:
+          description: список поставщиков из оффсетных контрактов
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/offsetPurchaseSupplierDTO'
+components:
+  schemas:
+    offsetPurchaseSupplierDTO:
+      type: object
+      properties:
+        contractId:
+          type: integer
+          format: int64
+          description: id контракта
+        supplierId:
+          type: integer
+          format: int64
+          description: id поставщика
+        registryNumberEis:
+          type: string
+          description: Реестровый номер ЕИС
+        contractName:
+          type: string
+          description: Наименование контракта
+        customerShortName:
+          type: string
+          description: Краткое наименование заказчика
+        supplierShortName:
+          type: string
+          description: Краткое наименование поставщика
+        supplierInn:
+          type: string
+          description: ИНН поставщика
+        supplierKpp:
+          type: string
+          description: КПП поставщика
+        supplierMspCategoryId:
+          type: string
+          description: Тип предприятия
+        supplierIsSocial:
+          type: boolean
+          description: Признак СОНО
+    offsetPurchaseSupplierFilter:
+      type: object
+      properties:
+        supplierNameOrInn:
+          type: string
+          description: «Полное наименование» (п. 3) или «ИНН» (п. 4)
+        page:
+          type: integer
+          description: номер страницы
+        pageSize:
+          type: integer
+          description: количество элементов на странице
+        sort:
+          type: string
+          description: сортировка
+        sortDir:
+          $ref: '#/components/schemas/sortDir'
+`,
+            `/**
+ * Получение поставщиков из оффсетных контрактов
+ */
+@PostMapping("/offsetPurchaseSuppliers")
+public List<OffsetPurchaseSupplierDTO> getOffsetPurchaseSuppliers(@RequestBody OffsetPurchaseSupplierFilter offsetPurchaseSupplierFilter) {
+    return null;
+}
+
+@Data
+public class OffsetPurchaseSupplierFilter {
+    /** «Полное наименование» (п. 3) или «ИНН» (п. 4) */
+    private String supplierNameOrInn;
+
+    /** номер страницы */
+    private Integer page;
+
+    /** количество элементов на странице */
+    private Integer pageSize;
+
+    /** сортировка */
+    private String sort;
+
+    private SortDir sortDir;
+}
+
+@Data
+public class OffsetPurchaseSupplierDTO {
+    /** id контракта */
+    private Long contractId;
+
+    /** id поставщика */
+    private Long supplierId;
+
+    /** Реестровый номер ЕИС */
+    private String registryNumberEis;
+
+    /** Наименование контракта */
+    private String contractName;
+
+    /** Краткое наименование заказчика */
+    private String customerShortName;
+
+    /** Краткое наименование поставщика */
+    private String supplierShortName;
+
+    /** ИНН поставщика */
+    private String supplierInn;
+
+    /** КПП поставщика */
+    private String supplierKpp;
+
+    /** Тип предприятия */
+    private String supplierMspCategoryId;
+
+    /** Признак СОНО */
+    private Boolean supplierIsSocial;
+}
+
+@Data
+public class SortDir {
+    // fields unknown
+}
+`);
+
     });
 </script>
 </body>
